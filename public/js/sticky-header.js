@@ -1,0 +1,1 @@
+(function(){var st=document.getElementById("stk"),h=document.querySelector(".hx .cta");if("IntersectionObserver"in window&&h){new IntersectionObserver(function(e){st.classList.toggle("off",e[0].isIntersecting)}).observe(h)}else{st.classList.remove("off")}})();
