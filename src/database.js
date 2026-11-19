@@ -92,6 +92,9 @@ const SCHEMA = [
      detail TEXT,
      at BIGINT NOT NULL
    )`,
+  // Added after launch: 1 while an order's quantities are taken out of product stock.
+  'ALTER TABLE orders ADD COLUMN IF NOT EXISTS stock_applied INTEGER NOT NULL DEFAULT 0',
+  'CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at)',
   'CREATE INDEX IF NOT EXISTS idx_products_visible ON products(deleted_at, visible, sort)',
   'CREATE INDEX IF NOT EXISTS idx_images_product ON product_images(product_id, sort)',
   'CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, created_at)',

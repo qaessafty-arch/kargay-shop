@@ -9,11 +9,12 @@ import {
   sessionCookieOptions,
   verifyAgainstDummy,
   verifyPassword,
+  hashPassword,
 } from '../auth.js';
 import { audit } from '../audit.js';
-import { loginSchema, parse } from '../validation.js';
+import { loginSchema, parse, passwordChangeSchema } from '../validation.js';
 
-export function authRouter({ db, loginLimiter }) {
+export function authRouter({ db, loginLimiter, passwordLimiter = (req, res, next) => next() }) {
   const router = Router();
 
   router.post('/login', loginLimiter, async (req, res, next) => {
@@ -79,6 +80,30 @@ export function authRouter({ db, loginLimiter }) {
   // Returns the current user and the CSRF token the page uses on writes.
   router.get('/me', requireAuth(db), (req, res) => {
     res.json({ user: req.auth.user, csrfToken: req.auth.csrf });
+  });
+
+  // Any signed-in user can change their own password. Other sessions of that user are signed out.
+  router.post('/password', requireAuth(db), requireCsrf(), passwordLimiter, async (req, res, next) => {
+    try {
+      const parsed = parse(passwordChangeSchema, req.body);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      const userId = req.auth.user.id;
+      const row = await db.get('SELECT password_hash FROM users WHERE id = ?', [userId]);
+      if (!row || !(await verifyPassword(parsed.data.currentPassword, row.password_hash))) {
+        await audit(db, { userId, action: 'password.change_failed', entity: 'user', entityId: userId });
+        return res.status(400).json({ error: 'Current password is incorrect.' });
+      }
+      if (parsed.data.currentPassword === parsed.data.newPassword) {
+        return res.status(400).json({ error: 'Choose a password different from the current one.' });
+      }
+      const hash = await hashPassword(parsed.data.newPassword);
+      await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
+      await db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?', [userId, req.auth.tokenHash]);
+      await audit(db, { userId, action: 'password.change', entity: 'user', entityId: userId });
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.post('/ping', requireAuth(db), requireCsrf(), (req, res) => res.json({ ok: true }));

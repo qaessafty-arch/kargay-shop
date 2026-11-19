@@ -1,9 +1,15 @@
 import express, { Router } from 'express';
 import path from 'node:path';
 import { config } from '../config.js';
-import { renderHomePage } from '../render.js';
+import { escapeHtml, renderHomePage } from '../render.js';
 import { getSettings, visibleProducts } from '../catalog.js';
 import { PHOTO_KEY, isNetlify, photoStore } from '../netlify-store.js';
+
+/** Public address of the site: SITE_URL when set, otherwise the address the visitor used. */
+function siteUrlOf(req) {
+  if (config.siteUrl) return config.siteUrl;
+  return `${req.protocol}://${req.get('host')}`;
+}
 
 export function publicRouter({ db, enquiryLimiter }) {
   const router = Router();
@@ -12,7 +18,7 @@ export function publicRouter({ db, enquiryLimiter }) {
   router.get('/', async (req, res, next) => {
     try {
       const [products, settings] = await Promise.all([visibleProducts(db), getSettings(db)]);
-      res.type('html').send(renderHomePage({ products, settings }));
+      res.type('html').send(renderHomePage({ products, settings, siteUrl: siteUrlOf(req) }));
     } catch (error) {
       next(error);
     }
@@ -31,11 +37,37 @@ export function publicRouter({ db, enquiryLimiter }) {
   });
 
   router.get('/robots.txt', (req, res) => {
-    res.type('text/plain').send('User-agent: *\nDisallow: /admin\nDisallow: /api/\n');
+    res.type('text/plain').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${siteUrlOf(req)}/sitemap.xml\n`);
   });
 
-  // Browsers ask for this automatically; there is no separate icon file yet.
-  router.get('/favicon.ico', (req, res) => res.status(204).end());
+  router.get('/sitemap.xml', async (req, res, next) => {
+    try {
+      const row = await db.get('SELECT MAX(updated_at) AS t FROM products WHERE deleted_at IS NULL AND visible = 1');
+      const lastmod = new Date(row?.t || Date.now()).toISOString().slice(0, 10);
+      res.type('application/xml').send(
+        `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
+          `<url><loc>${escapeHtml(siteUrlOf(req))}/</loc><lastmod>${lastmod}</lastmod></url></urlset>\n`,
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // The shop logo doubles as the browser tab icon.
+  router.get('/favicon.ico', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(config.publicDir, 'assets', 'brand-logo.jpg'));
+  });
+
+  // For uptime monitors: confirms the app and the database both answer.
+  router.get('/api/health', async (req, res) => {
+    try {
+      await db.get('SELECT 1 AS ok');
+      res.set('Cache-Control', 'no-store').json({ ok: true });
+    } catch {
+      res.status(503).set('Cache-Control', 'no-store').json({ ok: false });
+    }
+  });
 
   // Placeholder for <img> fallbacks in the template.
   router.get('/img/blank.gif', (req, res) => {

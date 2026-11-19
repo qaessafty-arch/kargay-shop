@@ -1,12 +1,12 @@
-/* Admin styles. Colours match the public site: navy, red, and the dark surfaces. */
+/* Admin styles. Colours match the public site: charcoal greys with a sand/stone accent. */
 :root {
-  --bg: #121212;
-  --card: #1e1e1e;
-  --line: #333;
-  --ink: #f2f2f2;
-  --muted: #b3b3b3;
-  --navy: #14306b;
-  --red: #e4202b;
+  --bg: #141414;
+  --card: #1c1c1c;
+  --line: #2e2e2e;
+  --ink: #f1efeb;
+  --muted: #a8a49d;
+  --accent: #d2b48c;
+  --accent-ink: #1a1a1a;
   --ok: #3fb950;
   --warn: #d29922;
   color-scheme: dark;
@@ -17,28 +17,28 @@
 figure { margin: 0; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); }
 body { font-size: 15px; line-height: 1.5; min-height: 100vh; }
-a { color: #8fb4ff; }
+a { color: var(--accent); }
 h1, h2, h3 { margin: 0 0 12px; letter-spacing: -0.01em; }
 h1 { font-size: 22px; }
 h2 { font-size: 18px; }
 p { margin: 0 0 12px; color: var(--muted); }
 .boot { padding: 40px; text-align: center; }
 
-:focus-visible { outline: 2px solid #8fb4ff; outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- Layout ---------- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  padding: 12px 20px; background: var(--navy); border-bottom: 2px solid var(--red);
+  padding: 12px 20px; background: #0e0e0e; border-bottom: 1px solid var(--line);
 }
 .topbar .brand { font-weight: 700; font-size: 17px; }
-.topbar .who { font-size: 14px; color: #dbe5ff; }
+.topbar .who { font-size: 14px; color: var(--muted); }
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 20px; border-bottom: 1px solid var(--line); background: #171717; }
 .tabs button {
   background: none; border: 0; color: var(--muted); padding: 12px 14px; cursor: pointer; font: inherit;
   border-bottom: 3px solid transparent;
 }
-.tabs button[aria-current="page"] { color: var(--ink); border-bottom-color: var(--red); }
+.tabs button[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
 main { padding: 20px; max-width: 1200px; margin: 0 auto; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
@@ -64,7 +64,7 @@ button, .button {
 }
 button:hover:not(:disabled) { background: #2d2d2d; }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 700; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 700; }
 button.danger { border-color: #7a2a2a; color: #ff9a9a; background: transparent; }
 button.small { padding: 4px 10px; font-size: 13px; }
 
@@ -103,3 +103,4 @@ td.num, th.num { text-align: end; font-variant-numeric: tabular-nums; }
   main { padding: 12px; }
   .tabs button { padding: 10px 8px; font-size: 14px; }
 }
+.muted { color: var(--muted); }

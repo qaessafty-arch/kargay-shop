@@ -3,7 +3,10 @@ var NUM='9647504251661',a0=document.querySelector('.ask');if(a0){var mm=(a0.getA
 function T(k,a,e){var l=window.LNG;return l=='ar'?a:l=='en'?e:k}
 var st={q:'',s:'',t:''},BD='1px solid rgba(128,128,128,.4)',CS='border:'+BD+';background:transparent;color:inherit;border-radius:16px;padding:6px 12px;font:inherit;cursor:pointer;margin:3px',AC='',IS='width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:'+BD+';background:transparent;color:inherit;font:inherit;margin:4px 0 12px';
 function sz(f){var b=f.querySelector('b'),m=b&&b.textContent.match(/(\d+)\s*[×x]\s*(\d+)/);return m?m[1]+'×'+m[2]:''}
-function ty(f){if(f._t)return f._t;var a=(f.querySelector('img')||{}).alt||'';return f._t=/ڕەسیف/.test(a)?'curb':(/گوڵدان|کورسی/.test(a)||a.indexOf('پارچە')==0)?'decor':'tile'}
+function ty(f){if(f._t)return f._t;var c=f.getAttribute('data-cat');if(c)return f._t=c;var a=(f.querySelector('img')||{}).alt||'';return f._t=/ڕەسیف/.test(a)?'ڕەسیف':(/گوڵدان|کورسی/.test(a)||a.indexOf('پارچە')==0)?'کەلوپەلی باخچە':'کاشی'}
+var CN={'کاشی':['بلاط','Tiles'],'ڕەسیف':['رصيف','Curbs'],'کەلوپەلی باخچە':['مستلزمات الحديقة','Garden items']};
+function cats(){var o=[],seen={};G.querySelectorAll('figure').forEach(function(f){var c=ty(f);if(!seen[c]){seen[c]=1;o.push(c)}});return o}
+function cl(c){var t=CN[c];return t?T(c,t[0],t[1]):c}
 function area(s){var m=s.split('×');return (+m[0])*(+m[1])}
 function sizes(){var o={};G.querySelectorAll('figure').forEach(function(f){var s=sz(f);if(s)o[s]=1});return Object.keys(o).sort(function(a,b){return area(b)-area(a)})}
 var bar=document.createElement('div'),inp=document.createElement('input'),c1=document.createElement('div'),c2=document.createElement('div'),cn=document.createElement('div');
@@ -15,7 +18,7 @@ function nq(t){return String(t).toLowerCase().replace(/[\u0660-\u0669]/g,functio
 var fs=G.querySelectorAll('figure'),n=0;fs.forEach(function(f){var s=sz(f),ok=(!st.s||(st.s=='-'?!s:s==st.s))&&(!st.t||ty(f)==st.t)&&(!st.q||nq(((f.textContent||'')+' '+((f.querySelector('img')||{}).alt||''))).indexOf(nq(st.q))>-1);f.style.display=ok?'':'none';if(ok)n++});
 c1.innerHTML='';c2.innerHTML='';
 c1.appendChild(chip(T('هەموو','الكل','All'),!st.t,function(){st.t='';flt()}));
-[['tile',T('کاشی','بلاط','Tiles')],['curb',T('ڕەسیف','رصيف','Curbs')],['decor',T('گوڵدان و ڕازاندنەوە','أصص وزينة','Pots & decor')]].forEach(function(x){c1.appendChild(chip(x[1],st.t==x[0],function(){st.t=st.t==x[0]?'':x[0];flt()}))});
+cats().map(function(c){return [c,cl(c)]}).forEach(function(x){c1.appendChild(chip(x[1],st.t==x[0],function(){st.t=st.t==x[0]?'':x[0];flt()}))});
 c2.appendChild(chip(T('هەموو قەبارە','كل المقاسات','All sizes'),!st.s,function(){st.s='';flt()}));
 sizes().forEach(function(s){c2.appendChild(chip(s.replace('×',' × '),st.s==s,function(){st.s=st.s==s?'':s;flt()}))});
 cn.textContent=n+' / '+fs.length}

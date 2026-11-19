@@ -15,7 +15,7 @@ const PRODUCT_SELECT = `
 
 /** Products shown on the public site, in shop order. */
 export function visibleProducts(db) {
-  return db.all(`${PRODUCT_SELECT} WHERE p.deleted_at IS NULL AND p.visible = 1 ORDER BY p.sort, p.code`);
+  return db.all(`${PRODUCT_SELECT} WHERE p.deleted_at IS NULL AND p.visible = 1 ORDER BY p.featured DESC, p.sort, p.code`);
 }
 
 export async function findProduct(db, id) {

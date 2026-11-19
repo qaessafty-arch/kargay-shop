@@ -102,18 +102,29 @@ Netlify's own rate limiting rules can add a stronger limit on `/api/auth/login`.
 
 ## Changing the design
 
-The public page is `views/index.template.html`: the original markup and CSS, with placeholders
-(`{{PHONE_1}}`, `{{WA_NUMBER}}`, …) that the server fills from **Settings**. Product cards are generated
-from the database using the same markup as the original, so the existing gallery scripts keep working.
-Edit colours and layout in the template's `<style>` blocks. The gallery scripts are in `public/js/`.
+The public page is `views/index.template.html`, with placeholders (`{{SHOP_NAME}}`, `{{PHONE_1}}`,
+`{{WA_NUMBER}}`, …) that the server fills from **Settings**. All colours and layout are in
+`public/css/site.css`; the colour variables at the top of that file change the whole look at once.
+The admin colours are in `public/admin/admin.css`. The gallery scripts are in `public/js/`.
+
+## Shop features
+
+- **Gallery filters** use the product categories from the admin, so a new category appears as a filter by itself.
+- **Featured** products are shown first. Products with stock set to 0 show "نەماوە" (out of stock).
+- **Stock** goes down when an order is confirmed or delivered, and comes back if it is cancelled or reopened.
+  Products with no stock number are not tracked.
+- **Orders** can be searched by customer name, phone number or order number.
+- **My account** lets every user change their own password; their other devices are signed out.
+- **Link previews**: sharing the site on WhatsApp or social media shows the shop name, description and photo.
+  Set `SITE_URL` (for example `https://kargay-shop.vercel.app`) if you use a custom domain.
+- **Monitoring**: `GET /api/health` returns `{"ok":true}` when the site and database are working.
+- `sitemap.xml` and `robots.txt` are generated for search engines; the admin is never indexed.
 
 ## What is not included (yet)
 
 - Online checkout and payments. Orders are taken through WhatsApp or in person and recorded in the admin.
-- Stock is recorded manually; it does not change automatically when orders are delivered.
 - The admin interface is in English. Translating it is a contained change in `public/admin/app.js`.
 - Prices are shown in the currency set in Settings (default IQD). Products without a price show the WhatsApp button only.
-- SQLite is designed for one server. Multiple app servers would need a different database.
 
 ## Files
 

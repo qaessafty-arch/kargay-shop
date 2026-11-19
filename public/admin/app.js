@@ -180,6 +180,7 @@
     { id: 'settings', label: 'Settings', owner: true },
     { id: 'users', label: 'Users', owner: true },
     { id: 'audit', label: 'Audit log', owner: true },
+    { id: 'account', label: 'My account' },
   ];
 
   function renderShell() {
@@ -229,6 +230,7 @@
       settings: renderSettings,
       users: renderUsers,
       audit: renderAudit,
+      account: renderAccount,
     };
     clear(state.main);
     (renderers[view] || renderDashboard)(arg);
@@ -251,6 +253,41 @@
   }
 
   // ---------- Dashboard ----------
+  function renderAccount() {
+    var main = state.main;
+    var current = el('input', { type: 'password', autocomplete: 'current-password', required: true, maxlength: 128 });
+    var next = el('input', { type: 'password', autocomplete: 'new-password', required: true, minlength: 12, maxlength: 128 });
+    var again = el('input', { type: 'password', autocomplete: 'new-password', required: true, minlength: 12, maxlength: 128 });
+    var submit = el('button', { class: 'primary', type: 'submit', text: 'Change password' });
+    var box = el('div');
+    var form = el('form', {
+      class: 'card',
+      onsubmit: function (event) {
+        event.preventDefault();
+        if (next.value !== again.value) return notice(box, 'The two new passwords do not match.');
+        submit.disabled = true;
+        api('POST', '/api/auth/password', { currentPassword: current.value, newPassword: next.value })
+          .then(function () {
+            form.reset();
+            notice(box, 'Password changed. You were signed out on your other devices.', 'ok');
+          })
+          .catch(function (error) { fail(box, error); })
+          .then(function () { submit.disabled = false; });
+      },
+    },
+      el('h2', { text: 'Change password' }),
+      el('label', null, 'Current password', current),
+      el('label', null, 'New password (at least 12 characters)', next),
+      el('label', null, 'New password again', again),
+      submit);
+    main.appendChild(el('h1', { text: 'My account' }));
+    main.appendChild(el('div', { class: 'card' },
+      el('p', null, el('strong', { text: state.user.displayName })),
+      el('p', { class: 'muted', text: state.user.email + ' · ' + state.user.role })));
+    main.appendChild(box);
+    main.appendChild(form);
+  }
+
   function renderDashboard() {
     var main = state.main;
     var grid = el('div', { class: 'grid-stats' });
@@ -552,16 +589,26 @@
     var status = el('select', { 'aria-label': 'Filter by status' },
       [['', 'All statuses'], ['pending', 'Pending'], ['confirmed', 'Confirmed'], ['delivered', 'Delivered'], ['cancelled', 'Cancelled']]
         .map(function (o) { return el('option', { value: o[0], text: o[1] }); }));
+    var q = el('input', { type: 'search', placeholder: 'Search name, phone or order #', 'aria-label': 'Search orders', maxlength: 100 });
     var results = el('div', { class: 'card table-wrap' });
+    var pager = el('div', { class: 'pager' });
     var page = 1;
+    var debounce;
 
     function load() {
       var params = new URLSearchParams({ page: String(page) });
       if (status.value) params.set('status', status.value);
+      if (q.value.trim()) params.set('q', q.value.trim());
       clear(results);
       api('GET', '/api/admin/orders?' + params.toString()).then(function (data) {
         clear(results);
-        if (!data.items.length) results.appendChild(el('p', { text: 'No orders yet.' }));
+        clear(pager);
+        if (!data.items.length) results.appendChild(el('p', { text: q.value.trim() || status.value ? 'No matching orders.' : 'No orders yet.' }));
+        if (data.pages > 1) {
+          pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page <= 1, text: 'Previous', onclick: function () { page--; load(); } }));
+          pager.appendChild(el('span', { text: 'Page ' + data.page + ' of ' + data.pages }));
+          pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page >= data.pages, text: 'Next', onclick: function () { page++; load(); } }));
+        }
         if (data.items.length) {
           results.appendChild(el('table', null,
             el('thead', null, el('tr', null, ['#', 'Customer', 'Phone', 'Status', 'Total', 'Created', ''].map(function (h) { return el('th', null, h); }))),
@@ -576,11 +623,17 @@
       }).catch(function (error) { fail(results, error); });
     }
     status.addEventListener('change', function () { page = 1; load(); });
+    q.addEventListener('input', function () {
+      clearTimeout(debounce);
+      debounce = setTimeout(function () { page = 1; load(); }, 300);
+    });
 
     main.appendChild(el('h1', { text: 'Orders' }));
-    main.appendChild(el('div', { class: 'search' }, status,
+    main.appendChild(el('p', { class: 'muted', text: 'Product stock goes down when an order is confirmed or delivered, and comes back if it is cancelled.' }));
+    main.appendChild(el('div', { class: 'search' }, q, status,
       el('button', { class: 'primary', type: 'button', text: 'New order', onclick: function () { go('new-order'); } })));
     main.appendChild(results);
+    main.appendChild(pager);
     load();
   }
 

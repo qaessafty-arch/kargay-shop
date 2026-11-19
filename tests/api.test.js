@@ -369,3 +369,97 @@ describe('database setup', () => {
     assert.ok((await db.get('SELECT COUNT(*) AS n FROM settings')).n >= 8);
   });
 });
+
+describe('shop features', () => {
+  test('the page uses real categories, marks sold-out items, and shows featured items first', async () => {
+    const { cookie, csrf } = await login(owner);
+    const cat = await call('POST', '/api/admin/categories', { cookie, csrf, body: { name: 'ڕەسیف' } });
+    assert.equal(cat.status, 201);
+    const created = await call('POST', '/api/admin/products', {
+      cookie, csrf,
+      body: { code: 70, name: 'Featured curb', categoryId: cat.json.id, stock: 0, visible: true, featured: true, sort: 999 },
+    });
+    assert.equal(created.status, 201, created.text);
+    const page = (await call('GET', '/')).text;
+    assert.match(page, /id="tile-70" data-id="70" data-cat="ڕەسیف"/);
+    assert.match(page, /class="soldout"/);
+    assert.ok(page.indexOf('tile-70') < page.indexOf('tile-01'), 'featured products come first');
+    assert.match(page, /<html lang="ckb" dir="rtl">/);
+    assert.match(page, /<meta property="og:image" content="http:\/\/127\.0\.0\.1:\d+\/assets\/hero\.jpg">/);
+    assert.equal((page.match(/<\/body>/g) || []).length, 1, 'the page has one body');
+  });
+
+  test('sitemap, robots, favicon and health check answer', async () => {
+    const sitemap = await call('GET', '/sitemap.xml');
+    assert.equal(sitemap.status, 200);
+    assert.match(sitemap.text, /<loc>http:\/\/127\.0\.0\.1:\d+\/<\/loc>/);
+    assert.match((await call('GET', '/robots.txt')).text, /Sitemap: http:\/\/127\.0\.0\.1:\d+\/sitemap\.xml/);
+    const icon = await call('GET', '/favicon.ico');
+    assert.equal(icon.status, 200);
+    assert.match(icon.headers.get('content-type'), /image\//);
+    const health = await call('GET', '/api/health');
+    assert.equal(health.status, 200);
+    assert.deepEqual(health.json, { ok: true });
+  });
+
+  test('confirming an order takes stock, cancelling gives it back, once each', async () => {
+    const { cookie, csrf } = await login(staff);
+    const p = await call('POST', '/api/admin/products', { cookie, csrf, body: { code: 71, name: 'Stocked tile', stock: 10 } });
+    const order = await call('POST', '/api/admin/orders', {
+      cookie, csrf,
+      body: { customerName: 'Stock Test', phone: '0750 111 2233', items: [{ productId: p.json.id, productName: 'Stocked tile', qty: 4, unitPrice: 1000 }] },
+    });
+    assert.equal(order.status, 201, order.text);
+    const stock = async () => (await call('GET', `/api/admin/products/${p.json.id}`, { cookie })).json.stock;
+    const setStatus = (status) => call('PATCH', `/api/admin/orders/${order.json.id}/status`, { cookie, csrf, body: { status } });
+
+    assert.equal(await stock(), 10, 'a pending order does not touch stock');
+    assert.equal((await setStatus('confirmed')).status, 200);
+    assert.equal(await stock(), 6);
+    await setStatus('delivered');
+    assert.equal(await stock(), 6, 'confirmed then delivered takes stock only once');
+    await setStatus('cancelled');
+    assert.equal(await stock(), 10);
+    await setStatus('cancelled');
+    assert.equal(await stock(), 10, 'cancelling twice does not add stock twice');
+  });
+
+  test('orders can be found by name, phone digits or number', async () => {
+    const { cookie } = await login(staff);
+    const byPhone = await call('GET', '/api/admin/orders?q=7501112233', { cookie });
+    assert.ok(byPhone.json.items.some((o) => o.customer_name === 'Stock Test'));
+    const byName = await call('GET', '/api/admin/orders?q=stock%20te', { cookie });
+    assert.ok(byName.json.items.some((o) => o.customer_name === 'Stock Test'));
+    const none = await call('GET', '/api/admin/orders?q=nobody-here', { cookie });
+    assert.equal(none.json.items.length, 0);
+  });
+
+  test('a user changes their own password; the old one stops working and other sessions end', async () => {
+    const account = { email: 'changer@test.local', password: PASSWORD };
+    await db.run('INSERT INTO users (email, display_name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?)', [
+      account.email, 'Changer', await hashPassword(PASSWORD), 'staff', Date.now(),
+    ]);
+    const first = await login(account);
+    const second = await login(account);
+    const wrong = await call('POST', '/api/auth/password', { ...first, body: { currentPassword: 'nope', newPassword: 'a-brand-new-password' } });
+    assert.equal(wrong.status, 400);
+    const short = await call('POST', '/api/auth/password', { ...first, body: { currentPassword: PASSWORD, newPassword: 'short' } });
+    assert.equal(short.status, 400);
+    const noCsrf = await call('POST', '/api/auth/password', { cookie: first.cookie, body: { currentPassword: PASSWORD, newPassword: 'a-brand-new-password' } });
+    assert.equal(noCsrf.status, 403);
+    const ok = await call('POST', '/api/auth/password', { ...first, body: { currentPassword: PASSWORD, newPassword: 'a-brand-new-password' } });
+    assert.equal(ok.status, 200, ok.text);
+    assert.equal((await call('GET', '/api/auth/me', { cookie: first.cookie })).status, 200, 'the current session stays signed in');
+    assert.equal((await call('GET', '/api/auth/me', { cookie: second.cookie })).status, 401, 'other sessions are signed out');
+    const old = await call('POST', '/api/auth/login', { body: { email: account.email, password: PASSWORD } });
+    assert.equal(old.status, 401);
+    await login({ email: account.email, password: 'a-brand-new-password' });
+  });
+
+  test('"this month" starts at midnight on the 1st in Iraq time', async () => {
+    const { monthStartMs } = await import('../src/routes/admin.js');
+    // 22:30 UTC on 31 Jan is already 1 Feb in Baghdad (UTC+3).
+    const start = monthStartMs(new Date(Date.UTC(2026, 0, 31, 22, 30)), 180);
+    assert.equal(new Date(start).toISOString(), '2026-01-31T21:00:00.000Z');
+  });
+});

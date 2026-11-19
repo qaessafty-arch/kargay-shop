@@ -82,6 +82,11 @@ export const userPatchSchema = z.object({
 
 export const passwordResetSchema = z.object({ password: passwordSchema });
 
+export const passwordChangeSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
+});
+
 export const idParam = z.coerce.number().int().positive();
 
 /** Parses req.body with a zod schema and returns { data } or { error }. */

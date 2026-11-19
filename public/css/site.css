@@ -907,3 +907,21 @@ footer {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
+
+/* ---------- Product status ---------- */
+.gallery .soldout {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #3a2a2a;
+  color: #f0c4bc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.gallery .empty {
+  grid-column: 1 / -1;
+  padding: 40px 0;
+  text-align: center;
+}

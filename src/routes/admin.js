@@ -60,6 +60,12 @@ async function imagesFor(db, productId) {
   return rows.map((img) => ({ id: img.id, file: img.file, thumb: img.thumb, kind: img.kind, sort: img.sort }));
 }
 
+/** Start of the current month in the shop's time zone, as epoch milliseconds. */
+export function monthStartMs(now, utcOffsetMinutes) {
+  const local = new Date(now.getTime() + utcOffsetMinutes * 60000);
+  return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - utcOffsetMinutes * 60000;
+}
+
 export function adminRouter({ db, writeLimiter }) {
   const router = Router();
   const owner = requireRole('owner');
@@ -72,21 +78,21 @@ export function adminRouter({ db, writeLimiter }) {
   // ---------- Dashboard ----------
   router.get('/stats', any, async (req, res) => {
     const count = async (sql, params = []) => (await db.get(sql, params)).n;
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const since = monthStart.getTime();
+    const since = monthStartMs(new Date(), config.shopUtcOffsetMinutes);
+    const [products, visible, featured, lowStock, pendingOrders, deliveredThisMonth, revenue, enquiries] = await Promise.all([
+      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL'),
+      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND visible = 1'),
+      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND featured = 1'),
+      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND stock IS NOT NULL AND stock <= 3'),
+      count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending'"),
+      count("SELECT COUNT(*) AS n FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
+      db.get("SELECT COALESCE(SUM(total), 0)::bigint AS total FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
+      db.get('SELECT COALESCE(SUM(enquiry_count), 0)::bigint AS total FROM products'),
+    ]);
     res.json({
-      products: await count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL'),
-      visible: await count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND visible = 1'),
-      featured: await count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND featured = 1'),
-      lowStock: await count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND stock IS NOT NULL AND stock <= 3'),
-      pendingOrders: await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending'"),
-      deliveredThisMonth: await count("SELECT COUNT(*) AS n FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
-      revenueThisMonth: (
-        await db.get("SELECT COALESCE(SUM(total), 0)::bigint AS total FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since])
-      ).total,
-      enquiriesTotal: (await db.get('SELECT COALESCE(SUM(enquiry_count), 0)::bigint AS total FROM products')).total,
+      products, visible, featured, lowStock, pendingOrders, deliveredThisMonth,
+      revenueThisMonth: revenue.total,
+      enquiriesTotal: enquiries.total,
     });
   });
 
@@ -331,8 +337,29 @@ export function adminRouter({ db, writeLimiter }) {
     const status = ['pending', 'confirmed', 'delivered', 'cancelled'].includes(req.query.status) ? req.query.status : null;
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = 50;
-    const params = status ? [status] : [];
-    const where = status ? 'WHERE status = ?' : '';
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+    const conditions = [];
+    const params = [];
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+    if (q) {
+      // Search by customer name, phone (digits only, so spacing does not matter) or order number.
+      const digits = q.replace(/\D/g, '');
+      const parts = ['customer_name ILIKE ?'];
+      params.push(`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+      if (digits) {
+        parts.push("regexp_replace(phone, '[^0-9]', '', 'g') LIKE ?");
+        params.push(`%${digits}%`);
+        if (digits.length <= 9) {
+          parts.push('id = ?');
+          params.push(Number(digits));
+        }
+      }
+      conditions.push(`(${parts.join(' OR ')})`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const total = (await db.get(`SELECT COUNT(*) AS n FROM orders ${where}`, params)).n;
     const items = await db.all(
       `SELECT id, customer_name, phone, status, total, created_at, updated_at FROM orders ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
@@ -385,9 +412,26 @@ export function adminRouter({ db, writeLimiter }) {
     if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
     const parsed = parse(orderStatusSchema, req.body);
     if (parsed.error) return res.status(400).json({ error: 'Invalid status.' });
-    const info = await db.run('UPDATE orders SET status = ?, updated_at = ? WHERE id = ?', [parsed.data.status, Date.now(), id.data]);
-    if (!info.changes) return res.status(404).json({ error: 'Order not found.' });
-    await audit(db, { userId: req.auth.user.id, action: 'order.status', entity: 'order', entityId: id.data, detail: { status: parsed.data.status } });
+    const status = parsed.data.status;
+    const result = await db.transaction(async (tx) => {
+      const order = await tx.get('SELECT id, status, stock_applied FROM orders WHERE id = ? FOR UPDATE', [id.data]);
+      if (!order) return null;
+      // Stock is taken when an order is confirmed or delivered, and given back if it is cancelled or reopened.
+      const shouldApply = status === 'confirmed' || status === 'delivered' ? 1 : 0;
+      if (shouldApply !== order.stock_applied) {
+        const sign = shouldApply ? -1 : 1;
+        const lines = await tx.all('SELECT product_id, qty FROM order_items WHERE order_id = ? AND product_id IS NOT NULL', [id.data]);
+        for (const line of lines) {
+          await tx.run('UPDATE products SET stock = GREATEST(stock + ?, 0), updated_at = ? WHERE id = ? AND stock IS NOT NULL', [
+            sign * line.qty, Date.now(), line.product_id,
+          ]);
+        }
+      }
+      await tx.run('UPDATE orders SET status = ?, stock_applied = ?, updated_at = ? WHERE id = ?', [status, shouldApply, Date.now(), id.data]);
+      await audit(tx, { userId: req.auth.user.id, action: 'order.status', entity: 'order', entityId: id.data, detail: { from: order.status, status } });
+      return true;
+    });
+    if (!result) return res.status(404).json({ error: 'Order not found.' });
     res.json({ ok: true });
   });
 

@@ -51,7 +51,8 @@ export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
   // Page routes first, so static folders never answer for them (e.g. the /admin redirect to /admin/).
   app.use(publicRouter({ db, enquiryLimiter }));
   app.use(staticRouter(uploadsRoot));
-  app.use('/api/auth', authRouter({ db, loginLimiter }));
+  const passwordLimiter = limit({ windowMs: 15 * 60 * 1000, limit: loginLimit });
+  app.use('/api/auth', authRouter({ db, loginLimiter, passwordLimiter }));
   app.use('/api/setup', setupRouter({ db, limiter: loginLimiter }));
   app.use('/api/admin', adminRouter({ db, writeLimiter }));
 

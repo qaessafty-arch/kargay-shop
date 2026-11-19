@@ -30,28 +30,33 @@ export function renderProductFigure(product, settings) {
 
   const message = `سڵاو، دەمەوێت زانیاری و نرخی کاشی ژمارە ${code} بزانم`;
   const waUrl = `https://wa.me/${settings.whatsapp_number}?text=${encodeURIComponent(message)}`;
+  const soldOut = product.stock === 0 ? '<span class="soldout">نەماوە</span>' : '';
+  const cat = product.category_name ? ` data-cat="${escapeHtml(product.category_name)}"` : '';
   const price = product.price != null ? `<span class="price">${Number(product.price).toLocaleString('en-US')} ${escapeHtml(settings.currency)}</span>` : '';
 
   return (
-    `<figure${fullAttr} data-full-alt="${escapeHtml(alt)}" id="${id}" data-id="${code}"${extraAttr}>` +
+    `<figure${fullAttr} data-full-alt="${escapeHtml(alt)}" id="${id}" data-id="${code}"${cat}${extraAttr}>` +
     `<a class="zoom" href="#${id}"><img decoding="async" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" width="830" height="500" loading="lazy"></a>` +
     `<a class="zx" href="#!">✕ گەڕانەوە</a>` +
-    `<figcaption>${escapeHtml(product.name)} ${size ? `<b dir="ltr">${escapeHtml(size)}</b>` : ''} ${price}</figcaption>` +
+    `<figcaption>${escapeHtml(product.name)} ${size ? `<b dir="ltr">${escapeHtml(size)}</b>` : ''} ${price}${soldOut}</figcaption>` +
     `<a class="ask" href="${escapeHtml(waUrl)}" target="_blank" rel="noopener" data-enquiry="${code}">نرخ</a>` +
     `</figure>`
   );
 }
 
 /** Renders the public page from the template, the visible products, and the shop settings. */
-export function renderHomePage({ products, settings }) {
+export function renderHomePage({ products, settings, siteUrl = '' }) {
   const gallery = products.map((p) => renderProductFigure(p, settings)).join('\n');
   const values = {
     '{{PHONE_1}}': settings.phone_primary,
     '{{PHONE_2}}': settings.phone_secondary,
     '{{WA_NUMBER}}': settings.whatsapp_number,
     '{{TIKTOK}}': settings.tiktok_handle,
+    '{{SHOP_NAME}}': settings.shop_name,
+    '{{SITE_URL}}': siteUrl,
+    '{{YEAR}}': String(new Date().getFullYear()),
   };
-  let page = loadTemplate().replace('<!--GALLERY-->', gallery || '<p class="lead">No products to show yet.</p>');
+  let page = loadTemplate().replace('<!--GALLERY-->', gallery || '<p class="lead empty">بەم زووانە بەرهەمەکان لێرە دەردەکەون.</p>');
   for (const [token, value] of Object.entries(values)) {
     page = page.split(token).join(escapeHtml(value));
   }

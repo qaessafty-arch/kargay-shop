@@ -29,6 +29,8 @@ export async function createSession(db, userId) {
   const token = randomToken();
   const csrf = randomToken(24);
   const now = Date.now();
+  // Housekeeping: expired sessions are otherwise only removed when someone presents them again.
+  await db.run('DELETE FROM sessions WHERE expires_at < ? OR last_seen_at < ?', [now, now - config.sessionIdleMs]);
   await db.run(
     'INSERT INTO sessions (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
     [sha256(token), userId, csrf, now, now, now + config.sessionMaxMs],
