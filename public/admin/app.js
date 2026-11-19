@@ -178,6 +178,7 @@
     { id: 'orders', label: 'Orders' },
     { id: 'categories', label: 'Categories' },
     { id: 'gallery', label: 'Gallery' },
+    { id: 'studio', label: 'AI Studio' },
     { id: 'settings', label: 'Settings', owner: true },
     { id: 'users', label: 'Users', owner: true },
     { id: 'audit', label: 'Audit log', owner: true },
@@ -229,6 +230,8 @@
       'new-order': renderOrderForm,
       categories: renderCategories,
       gallery: renderGallery,
+      studio: renderStudio,
+      'studio-project': renderStudioProject,
       settings: renderSettings,
       users: renderUsers,
       audit: renderAudit,
@@ -317,6 +320,11 @@
           pill(p.visible ? 'visible' : 'hidden', p.visible ? 'on' : 'off')));
       });
       lower.appendChild(recent);
+      api('GET', '/api/admin/studio/stats').then(function (st) {
+        var e = st.last30Days || {};
+        grid.appendChild(el('div', { class: 'card stat' }, el('b', { text: String(st.savedProjects) }), el('span', { text: 'AI Studio saved projects' })));
+        grid.appendChild(el('div', { class: 'card stat' }, el('b', { text: String(e.open || 0) }), el('span', { text: 'AI Studio visits (30 days)' })));
+      }).catch(function () {});
 
       if (state.user.role === 'owner') {
         var activity = el('section', { class: 'card' }, el('h2', { text: 'Recent activity' }));
@@ -472,6 +480,9 @@
       sort: el('input', { id: 'sort', type: 'number', value: 0 }),
       visible: el('input', { id: 'visible', type: 'checkbox', checked: true }),
       featured: el('input', { id: 'featured', type: 'checkbox' }),
+      vizEnabled: el('input', { id: 'vizEnabled', type: 'checkbox' }),
+      groutMm: el('input', { id: 'groutMm', type: 'number', min: 0, max: 30, value: 3 }),
+      groutColor: el('input', { id: 'groutColor', type: 'color', value: '#8c877f' }),
     };
     var category = categorySelect(null);
     category.id = 'categoryId';
@@ -494,6 +505,9 @@
         sort: Number(fields.sort.value || 0),
         visible: fields.visible.checked,
         featured: fields.featured.checked,
+        vizEnabled: fields.vizEnabled.checked,
+        groutMm: Number(fields.groutMm.value || 0),
+        groutColor: fields.groutColor.value,
       };
       var request = isNew
         ? api('POST', '/api/admin/products', payload)
@@ -524,6 +538,10 @@
     form.appendChild(el('div', { class: 'row' },
       el('label', { class: 'check' }, fields.visible, 'Visible on the site'),
       el('label', { class: 'check' }, fields.featured, 'Featured (shown first)')));
+    form.appendChild(el('h2', { class: 'form-section', text: 'AI Studio' }));
+    form.appendChild(el('div', { class: 'row' },
+      el('label', { class: 'check' }, fields.vizEnabled, 'Customers can preview this tile in the AI Studio (needs a texture, below)'),
+      labelled('Default grout width (mm)', fields.groutMm), labelled('Default grout colour', fields.groutColor)));
     var saveButton = el('button', { class: 'primary', type: 'submit', text: 'Save product' });
     var previewLink = el('a', { class: 'button', target: '_blank', rel: 'noopener', text: 'Preview on site', hidden: true });
     form.appendChild(el('div', { class: 'actions' }, saveButton, previewLink,
@@ -553,12 +571,16 @@
       fields.sort.value = p.sort;
       fields.visible.checked = p.visible;
       fields.featured.checked = p.featured;
+      fields.vizEnabled.checked = p.vizEnabled;
+      fields.groutMm.value = p.groutMm ?? 3;
+      fields.groutColor.value = p.groutColor || '#8c877f';
       clear(category);
       category.appendChild(el('option', { value: '', text: 'No category' }));
       state.categories.forEach(function (c) {
         category.appendChild(el('option', { value: c.id, text: c.name, selected: c.id === p.categoryId }));
       });
       main.appendChild(imagesPanel(p, notes));
+      main.appendChild(texturePanel(p, notes, fields));
     }).catch(function (error) { fail(notes, error); });
   }
 
@@ -631,6 +653,113 @@
     panel.appendChild(el('div', { class: 'actions' }, fileInput, upload));
 
     api('GET', '/api/admin/products/' + product.id).then(function (p) { paint(p.images); }).catch(function (error) { fail(notes, error); });
+    return panel;
+  }
+
+  /**
+   * The tile surface used by the AI Studio: one straight-on photo of a single tile, cropped to its edges.
+   * It can be uploaded, or cut from one of the product's photos with the crop tool.
+   */
+  function texturePanel(product, notes, fields) {
+    var panel = el('section', { class: 'card' });
+    var preview = el('img', { class: 'site-image logo', alt: 'Texture' });
+    var status = el('p', { class: 'muted' });
+    var fileInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Choose texture' });
+    var cropBox = el('div');
+
+    function show(p) {
+      preview.hidden = !p.textureUrl;
+      if (p.textureUrl) preview.src = p.textureThumb || p.textureUrl;
+      status.textContent = p.textureUrl
+        ? (p.vizEnabled ? 'Texture ready. Customers can preview this tile.' : 'Texture ready. Tick "Customers can preview" above and save to show it in the Studio.')
+        : 'No texture yet. Customers cannot preview this tile until one is added.';
+      removeBtn.hidden = !p.textureUrl;
+    }
+
+    function uploadBlob(blob, name) {
+      var data = new FormData();
+      data.append('file', blob, name || 'texture.webp');
+      return api('POST', '/api/admin/products/' + product.id + '/texture', undefined, data).then(function (p) {
+        show(p);
+        notice(notes, 'Texture saved.', 'ok');
+      });
+    }
+
+    var uploadBtn = el('button', { class: 'primary small', type: 'button', text: 'Upload texture', onclick: function () {
+      if (!fileInput.files.length) return notice(notes, 'Choose an image first.', 'error');
+      uploadBtn.disabled = true;
+      uploadBlob(fileInput.files[0], fileInput.files[0].name).catch(function (e) { fail(notes, e); }).then(function () { uploadBtn.disabled = false; fileInput.value = ''; });
+    } });
+    var removeBtn = el('button', { class: 'small danger', type: 'button', text: 'Remove texture', onclick: function () {
+      if (!window.confirm('Remove the texture? The tile will no longer be available in the AI Studio.')) return;
+      api('DELETE', '/api/admin/products/' + product.id + '/texture').then(function (p) { show(p); fields.vizEnabled.checked = false; }).catch(function (e) { fail(notes, e); });
+    } });
+
+    // Crop tool: drag the square over one tile in a straight-on photo; the slider sets its size.
+    function openCrop(src) {
+      clear(cropBox);
+      var img = el('img', { src: src, alt: '', class: 'crop-img' });
+      var frame = el('div', { class: 'crop-frame' });
+      var stage = el('div', { class: 'crop-stage' }, img, frame);
+      var size = el('input', { type: 'range', min: 10, max: 100, value: 70, 'aria-label': 'Crop size' });
+      var box = { x: 0.15, y: 0.15, s: 0.7 };
+      function paint() {
+        frame.style.left = (box.x * 100) + '%';
+        frame.style.top = (box.y * 100 * (img.naturalWidth / img.naturalHeight || 1)) + '%';
+        frame.style.width = (box.s * 100) + '%';
+        frame.style.height = (box.s * 100 * (img.naturalWidth / img.naturalHeight || 1)) + '%';
+      }
+      img.addEventListener('load', paint);
+      size.addEventListener('input', function () {
+        box.s = Number(size.value) / 100;
+        var ratio = img.naturalWidth / img.naturalHeight;
+        box.x = Math.min(box.x, 1 - box.s);
+        box.y = Math.min(box.y, 1 / ratio - box.s);
+        paint();
+      });
+      var dragging = null;
+      frame.addEventListener('pointerdown', function (e) { dragging = { x: e.clientX, y: e.clientY, bx: box.x, by: box.y }; frame.setPointerCapture(e.pointerId); });
+      frame.addEventListener('pointermove', function (e) {
+        if (!dragging) return;
+        var r = stage.getBoundingClientRect();
+        var ratio = img.naturalWidth / img.naturalHeight;
+        box.x = Math.max(0, Math.min(1 - box.s, dragging.bx + (e.clientX - dragging.x) / r.width));
+        box.y = Math.max(0, Math.min(1 / ratio - box.s, dragging.by + (e.clientY - dragging.y) / r.width));
+        paint();
+      });
+      frame.addEventListener('pointerup', function () { dragging = null; });
+      cropBox.appendChild(el('div', { class: 'card' },
+        el('p', { class: 'muted', text: 'Drag the square over exactly one whole tile, edge to edge. Use a photo taken straight from above.' }),
+        stage, labelled('Square size', size),
+        el('div', { class: 'actions' },
+          el('button', { class: 'primary', type: 'button', text: 'Save as texture', onclick: function () {
+            var c = document.createElement('canvas');
+            c.width = 1024;
+            c.height = 1024;
+            var px = box.s * img.naturalWidth;
+            c.getContext('2d').drawImage(img, box.x * img.naturalWidth, box.y * img.naturalWidth, px, px, 0, 0, 1024, 1024);
+            c.toBlob(function (blob) {
+              uploadBlob(blob, 'texture.png').then(function () { clear(cropBox); }).catch(function (e) { fail(notes, e); });
+            }, 'image/png');
+          } }),
+          el('button', { type: 'button', text: 'Cancel', onclick: function () { clear(cropBox); } }))));
+    }
+
+    var photoButtons = el('div', { class: 'actions' });
+    api('GET', '/api/admin/products/' + product.id).then(function (p) {
+      show(p);
+      p.images.forEach(function (image, i) {
+        photoButtons.appendChild(el('button', { class: 'small', type: 'button', text: 'Crop from photo ' + (i + 1), onclick: function () { openCrop('/api/admin/images/' + image.id + '/raw'); } }));
+      });
+    }).catch(function (e) { fail(notes, e); });
+
+    panel.appendChild(el('h2', { text: 'AI Studio texture' }));
+    panel.appendChild(el('p', { text: 'A straight-on photo of one tile, cropped exactly to its edges. The Studio repeats it at the real tile size, so it must not include grout, shadows or other tiles.' }));
+    panel.appendChild(preview);
+    panel.appendChild(status);
+    panel.appendChild(el('div', { class: 'actions' }, fileInput, uploadBtn, removeBtn));
+    panel.appendChild(photoButtons);
+    panel.appendChild(cropBox);
     return panel;
   }
 
@@ -879,6 +1008,127 @@
     main.appendChild(el('div', { class: 'card' }, el('div', { class: 'actions' }, fileInput, upload)));
     main.appendChild(el('div', { class: 'card' }, grid));
     api('GET', '/api/admin/gallery').then(function (r) { paint(r.items); }).catch(function (error) { fail(notes, error); });
+  }
+
+  // ---------- AI Studio ----------
+  function renderStudio() {
+    var main = state.main;
+    var notes = el('div');
+    var isOwner = state.user.role === 'owner';
+    var stats = el('div', { class: 'grid-stats' });
+    var projects = el('div', { class: 'card table-wrap' });
+    var reports = el('div', { class: 'card table-wrap' });
+    main.appendChild(notes);
+    main.appendChild(el('h1', { text: 'AI Studio' }));
+    main.appendChild(el('p', { class: 'muted', text: 'Customers upload photos of their space, the floor is detected on their own device with an open AI model (SlimSAM, a compact Segment Anything model, Apache-2.0 licence, so it may be used commercially), and your tiles are laid in perspective. No AI service account or API key is used, so there are no AI credentials to manage. Photos reach you only when a customer ticks the consent box and saves.' }));
+    main.appendChild(stats);
+
+    // Settings (owner can change; staff can see)
+    var enabled = el('select', { disabled: !isOwner }, el('option', { value: '1', text: 'On' }), el('option', { value: '0', text: 'Off (page and links hidden)' }));
+    var retention = el('input', { type: 'number', min: 1, max: 365, disabled: !isOwner });
+    var maxMb = el('select', { disabled: !isOwner }, ['1', '2', '3'].map(function (v) { return el('option', { value: v, text: v + ' MB' }); }));
+    var waste = el('input', { type: 'number', min: 0, max: 30, disabled: !isOwner });
+    var settingsCard = el('form', { class: 'card', onsubmit: function (event) {
+      event.preventDefault();
+      api('PUT', '/api/admin/settings', { studio_enabled: enabled.value, studio_retention_days: retention.value.trim(), studio_max_upload_mb: maxMb.value, studio_waste_percent: waste.value.trim() })
+        .then(function () { notice(notes, 'AI Studio settings saved.', 'ok'); })
+        .catch(function (e) { fail(notes, e); });
+    } },
+      el('h2', { text: 'Settings' }),
+      el('div', { class: 'row' },
+        labelled('AI Studio', enabled),
+        labelled('Delete saved customer projects after (days)', retention),
+        labelled('Largest photo a customer can save', maxMb),
+        labelled('Default cutting allowance (%)', waste)),
+      el('p', { class: 'muted', text: 'Accepted photo types are JPG, PNG and WebP; videos are only used on the customer\'s device to pick a frame. Saved photos are stored privately in the database, with their location data removed.' }),
+      isOwner ? el('div', { class: 'actions' }, el('button', { class: 'primary', type: 'submit', text: 'Save settings' })) : null);
+    main.appendChild(settingsCard);
+    main.appendChild(el('h2', { text: 'Customer projects' }));
+    main.appendChild(projects);
+    main.appendChild(el('h2', { text: 'Reported problems' }));
+    main.appendChild(reports);
+
+    api('GET', '/api/admin/settings').then(function (s) {
+      enabled.value = s.studio_enabled || '1';
+      retention.value = s.studio_retention_days || '90';
+      maxMb.value = s.studio_max_upload_mb || '3';
+      waste.value = s.studio_waste_percent || '10';
+    }).catch(function (e) { fail(notes, e); });
+
+    api('GET', '/api/admin/studio/stats').then(function (s) {
+      var e = s.last30Days || {};
+      [['Studio visits (30 days)', e.open || 0], ['Floors detected (30 days)', e.detect || 0], ['3D views (30 days)', e.view3d || 0],
+        ['Quote requests (30 days)', e.quote || 0], ['Saved projects', s.savedProjects], ['Open problem reports', s.openReports],
+        ['Tiles ready to preview', s.vizProducts]].forEach(function (c) {
+        stats.appendChild(el('div', { class: 'card stat' }, el('b', { text: String(c[1]) }), el('span', { text: c[0] })));
+      });
+    }).catch(function (e) { fail(notes, e); });
+
+    api('GET', '/api/admin/studio/projects').then(function (d) {
+      if (!d.items.length) return projects.appendChild(el('p', { text: 'No saved projects yet.' }));
+      projects.appendChild(el('table', null,
+        el('thead', null, el('tr', null, ['Ref', 'Saved', 'Tile', 'Area', 'Tiles', 'Photos', 'Measurements', 'Reports', ''].map(function (h) { return el('th', null, h); }))),
+        el('tbody', null, d.items.map(function (p) {
+          return el('tr', null,
+            el('td', null, p.ref), el('td', null, when(p.createdAt)),
+            el('td', null, p.productCode != null ? '#' + p.productCode + ' ' + (p.productName || '') : '—'),
+            el('td', { class: 'num' }, p.area != null ? p.area + ' m²' : '—'), el('td', { class: 'num' }, p.tiles != null ? String(p.tiles) : '—'),
+            el('td', { class: 'num' }, String(p.views)),
+            el('td', null, pill(p.measurementStatus === 'verified' ? 'verified' : 'customer', p.measurementStatus === 'verified' ? 'on' : '')),
+            el('td', null, p.openReports ? pill(String(p.openReports), 'warn') : ''),
+            el('td', null, el('button', { class: 'small', type: 'button', text: 'Open', onclick: function () { go('studio-project', p.id); } })));
+        }))));
+    }).catch(function (e) { fail(notes, e); });
+
+    api('GET', '/api/admin/studio/reports').then(function (d) {
+      if (!d.items.length) return reports.appendChild(el('p', { text: 'No reports.' }));
+      reports.appendChild(el('table', null,
+        el('thead', null, el('tr', null, ['Project', 'When', 'Message', ''].map(function (h) { return el('th', null, h); }))),
+        el('tbody', null, d.items.map(function (r) {
+          return el('tr', null, el('td', null, r.ref || '—'), el('td', null, when(r.created_at)), el('td', null, r.message),
+            el('td', null, r.resolved_at ? pill('resolved', 'on') : el('button', { class: 'small', type: 'button', text: 'Mark resolved', onclick: function () {
+              api('POST', '/api/admin/studio/reports/' + r.id + '/resolve').then(function () { go('studio'); }).catch(function (e) { fail(notes, e); });
+            } })));
+        }))));
+    }).catch(function (e) { fail(notes, e); });
+  }
+
+  function renderStudioProject(id) {
+    var main = state.main;
+    var notes = el('div');
+    main.appendChild(notes);
+    main.appendChild(el('button', { type: 'button', text: '← AI Studio', onclick: function () { go('studio'); } }));
+    api('GET', '/api/admin/studio/projects/' + id).then(function (p) {
+      var d = p.data || {};
+      main.appendChild(el('h1', { text: 'Project ' + p.ref }));
+      var info = el('div', { class: 'card' },
+        el('p', null, el('strong', { text: d.productCode != null ? 'Tile #' + d.productCode + ' ' + (d.productName || '') + (d.tileSize ? ' · ' + d.tileSize + ' cm' : '') : 'No tile chosen' })),
+        el('p', { text: 'Area: ' + (d.area != null ? d.area + ' m²' : '—') + ' · Total to order: ' + (d.tiles != null ? d.tiles + ' pcs' : '—') + (d.waste != null ? ' (incl. ' + d.waste + '% cutting allowance)' : '') }),
+        el('p', { class: 'muted', text: 'Saved ' + when(p.createdAt) + ' · language ' + p.lang + ' · deleted automatically ' + when(p.expiresAt) }),
+        p.description ? el('p', { text: 'Customer notes: ' + p.description }) : null,
+        el('div', { class: 'actions' },
+          el('button', { class: p.measurementStatus === 'verified' ? '' : 'primary', type: 'button', text: p.measurementStatus === 'verified' ? 'Mark measurements as not verified' : 'Mark measurements verified on site', onclick: function () {
+            api('PATCH', '/api/admin/studio/projects/' + p.id, { measurementStatus: p.measurementStatus === 'verified' ? 'customer' : 'verified' })
+              .then(function () { go('studio-project', p.id); }).catch(function (e) { fail(notes, e); });
+          } }),
+          state.user.role === 'owner' ? el('button', { class: 'danger', type: 'button', text: 'Delete project', onclick: function () {
+            if (!window.confirm('Delete this customer project and its photos?')) return;
+            api('DELETE', '/api/admin/studio/projects/' + p.id).then(function () { go('studio'); }).catch(function (e) { fail(notes, e); });
+          } }) : null));
+      main.appendChild(info);
+      p.views.forEach(function (v) {
+        var base = '/api/admin/studio/projects/' + p.id + '/views/' + v.idx + '/';
+        main.appendChild(el('section', { class: 'card' },
+          el('h2', { text: 'Photo ' + (v.idx + 1) + (v.data.rect ? ' · marked rectangle ' + v.data.rect.length + ' × ' + v.data.rect.width + ' m' : '') }),
+          el('div', { class: 'studio-pair' },
+            el('figure', null, el('img', { src: base + 'original', alt: 'Original', loading: 'lazy' }), el('figcaption', { text: 'Original' })),
+            v.hasResult ? el('figure', null, el('img', { src: base + 'result', alt: 'Design', loading: 'lazy' }), el('figcaption', { text: 'Design' })) : null)));
+      });
+      if (p.reports && p.reports.length) {
+        main.appendChild(el('section', { class: 'card' }, el('h2', { text: 'Reports' }),
+          p.reports.map(function (r) { return el('p', { text: when(r.created_at) + ' — ' + r.message + (r.resolved_at ? ' (resolved)' : '') }); })));
+      }
+    }).catch(function (e) { fail(notes, e); });
   }
 
   // ---------- Settings (owner) ----------

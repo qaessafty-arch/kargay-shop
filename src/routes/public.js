@@ -1,10 +1,11 @@
 import express, { Router } from 'express';
 import path from 'node:path';
 import { config } from '../config.js';
-import { LANGS, isLang, langPrefix } from '../i18n.js';
+import { LANGS, clientStrings, isLang, langPrefix } from '../i18n.js';
 import { SESSION_COOKIE, loadSession } from '../auth.js';
 import { allCategories, findProductByCode, galleryImages, getSettings, productImages, visibleProducts } from '../catalog.js';
-import { e, galleryPage, homePage, makeContext, notFoundPage, productPage } from '../views.js';
+import { e, galleryPage, homePage, makeContext, notFoundPage, productPage, sharePage, studioPage } from '../views.js';
+import { recordEvent } from '../studio.js';
 import { PHOTO_KEY, isNetlify, photoStore } from '../netlify-store.js';
 
 /** Public address of the site: SITE_URL when set, otherwise the address the visitor used. */
@@ -85,6 +86,27 @@ export function publicRouter({ db, enquiryLimiter }) {
       }
     });
 
+    router.get(`${p}/studio`, async (req, res, next) => {
+      try {
+        const ctx = await context(req, res, prefixLang, '/studio');
+        if (!ctx) return;
+        if (!ctx.studioOn) return html(res, notFoundPage(ctx), 404);
+        const [products, categories, quotes] = await Promise.all([
+          visibleProducts(db),
+          allCategories(db),
+          db.all("SELECT product_id, COUNT(*) AS n FROM studio_events WHERE kind = 'quote' AND product_id IS NOT NULL GROUP BY product_id"),
+        ]);
+        // Popularity uses real counts only: WhatsApp enquiry clicks plus Studio quote requests.
+        const quoteMap = new Map(quotes.map((q) => [q.product_id, q.n]));
+        const popularity = new Map(products.map((p) => [p.id, (p.enquiry_count || 0) + (quoteMap.get(p.id) || 0)]));
+        const preselect = Number.isInteger(Number(req.query.product)) ? Number(req.query.product) : null;
+        await recordEvent(db, 'open');
+        html(res, studioPage(ctx, { products, categories, popularity, preselect, strings: clientStrings(ctx.lang) }));
+      } catch (error) {
+        next(error);
+      }
+    });
+
     router.get(`${p}/gallery`, async (req, res, next) => {
       try {
         const ctx = await context(req, res, prefixLang, '/gallery');
@@ -125,6 +147,7 @@ export function publicRouter({ db, enquiryLimiter }) {
       const pages = [
         ['/', newest],
         ['/gallery', newest],
+        ...(settings.studio_enabled !== '0' ? [['/studio', newest]] : []),
         ...products.map((p) => [`/products/${p.code}`, p.updated_at]),
       ];
       const entries = pages.flatMap(([pagePath, updated]) =>
@@ -190,6 +213,15 @@ export function publicRouter({ db, enquiryLimiter }) {
   return router;
 }
 
+/** Shared design page, in the language the customer used when saving it. */
+export async function renderSharePage(db, req, project, token) {
+  const settings = await getSettings(db);
+  const lang = project && isLang(project.lang) ? project.lang : defaultLangOf(settings);
+  const ctx = makeContext({ lang, settings, siteUrl: siteUrlOf(req), path: '/studio' });
+  const product = project?.data?.productId ? await db.get('SELECT * FROM products WHERE id = ?', [Number(project.data.productId)]) : null;
+  return sharePage(ctx, { project, token, product });
+}
+
 /** Friendly 404 page in the language of the URL, for anything that is not a page, a file or the API. */
 export function notFoundHandler({ db }) {
   return async (req, res, next) => {
@@ -212,6 +244,9 @@ export function staticRouter(uploadsRoot) {
   router.use('/css', express.static(path.join(config.publicDir, 'css'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
   router.use('/js', express.static(path.join(config.publicDir, 'js'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
   router.use('/admin', express.static(path.join(config.publicDir, 'admin'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
+  // Self-hosted 3D and AI runtime libraries and the floor-detection model: long cache, never change in place.
+  router.use('/vendor', express.static(path.join(config.publicDir, 'vendor'), { maxAge: '30d', index: false, dotfiles: 'deny' }));
+  router.use('/models', express.static(path.join(config.publicDir, 'models'), { maxAge: '30d', index: false, dotfiles: 'deny' }));
   router.use('/assets', express.static(path.join(config.publicDir, 'assets'), { maxAge: '1d', index: false, dotfiles: 'deny' }));
   router.use('/uploads', express.static(uploadsRoot, { maxAge: '30d', immutable: true, index: false, dotfiles: 'deny' }));
   return router;

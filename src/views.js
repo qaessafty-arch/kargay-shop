@@ -22,6 +22,7 @@ export function makeContext({ lang, settings, siteUrl, path }) {
     path, // path without the language prefix, e.g. "/", "/products/7", "/gallery"
     home: prefix ? `${prefix}/` : '/',
     shopName: settingFor(settings, 'shop_name', lang),
+    studioOn: settings.studio_enabled !== '0',
     logo: settings.logo_url || DEFAULT_LOGO,
     hero: settings.hero_url || DEFAULT_HERO,
     tr: (key, vars) => t(lang, key, vars),
@@ -82,6 +83,10 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  spark: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  camera: '<path d="M4 7h3l2-3h6l2 3h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="4"/>',
+  video: '<rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10 6-3v10l-6-3"/>',
 };
 
 const icon = (name, cls = '') => `<svg class="ic${cls ? ` ${cls}` : ''}" aria-hidden="true" focusable="false"><use href="#i-${name}"/></svg>`;
@@ -136,7 +141,7 @@ function phoneHref(phone) {
 }
 
 // ---------- Layout ----------
-function head(ctx, { title, description, image, type = 'website', noindex = false, ld = [] }) {
+function head(ctx, { title, description, image, type = 'website', noindex = false, ld = [], extraCss = '' }) {
   const canonical = abs(ctx, urlFor(ctx, ctx.lang, ctx.path));
   const alternates = LANGS.map((l) => `<link rel="alternate" hreflang="${LANG_META[l].hreflang}" href="${e(abs(ctx, urlFor(ctx, l, ctx.path)))}">`).join('');
   const ogAlt = LANGS.filter((l) => l !== ctx.lang).map((l) => `<meta property="og:locale:alternate" content="${LANG_META[l].ogLocale}">`).join('');
@@ -163,7 +168,7 @@ ${alternates}<link rel="alternate" hreflang="x-default" href="${e(abs(ctx, urlFo
 <link rel="apple-touch-icon" href="${e(ctx.logo)}">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Kufi+Arabic:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="/css/site.css?v=3">
+<link rel="stylesheet" href="/css/site.css?v=4">${extraCss ? `\n<link rel="stylesheet" href="${extraCss}">` : ''}
 ${[businessLd(ctx), ...ld].map(jsonLd).join('\n')}`;
 }
 
@@ -182,6 +187,7 @@ function siteHeader(ctx, { overlay }) {
 <a class="brand" href="${e(ctx.home)}"><img src="${e(ctx.logo)}" alt="" width="40" height="40"><span>${e(ctx.shopName)}</span></a>
 <nav class="header-nav" aria-label="${e(ctx.tr('nav.menu'))}">
 <a href="${e(anchor('products'))}">${e(ctx.tr('nav.products'))}</a>
+${ctx.studioOn ? `<a href="${e(`${ctx.prefix}/studio`)}" class="nav-studio">${e(ctx.tr('nav.studio'))}</a>` : ''}
 <a href="${e(anchor('about'))}">${e(ctx.tr('nav.about'))}</a>
 <a href="${e(`${ctx.prefix}/gallery`)}">${e(ctx.tr('nav.gallery'))}</a>
 <a href="${e(anchor('contact'))}">${e(ctx.tr('nav.contact'))}</a>
@@ -202,6 +208,7 @@ function menuPanel(ctx) {
   const items = [
     [ctx.home, 'home', 'nav.home'],
     [anchor('products'), 'grid', 'nav.products'],
+    ctx.studioOn ? [`${ctx.prefix}/studio`, 'spark', 'nav.studio'] : null,
     [anchor('about'), 'info', 'nav.about'],
     [anchor('why'), 'check', 'nav.why'],
     [`${ctx.prefix}/gallery`, 'image', 'nav.gallery'],
@@ -230,7 +237,7 @@ function siteFooter(ctx) {
 </footer>`;
 }
 
-function layout(ctx, { meta, body, overlay = false, bodyClass = '' }) {
+function layout(ctx, { meta, body, overlay = false, bodyClass = '', scripts = '', floatingWa = true }) {
   return `<!doctype html>
 <html lang="${LANG_META[ctx.lang].html}" dir="${ctx.dir}" class="no-js" data-lang="${ctx.lang}" data-prefix="${e(ctx.prefix)}">
 <head>
@@ -245,8 +252,8 @@ ${menuPanel(ctx)}
 ${body}
 </main>
 ${siteFooter(ctx)}
-<a class="wa-float" href="${e(waLink(ctx, ctx.tr('wa.general', { name: ctx.shopName })))}" target="_blank" rel="noopener" aria-label="${e(ctx.tr('cta.floating'))}">${icon('wa')}</a>
-<script src="/js/site.js?v=3" defer></script>
+${floatingWa ? `<a class="wa-float" href="${e(waLink(ctx, ctx.tr('wa.general', { name: ctx.shopName })))}" target="_blank" rel="noopener" aria-label="${e(ctx.tr('cta.floating'))}">${icon('wa')}</a>` : ''}
+<script src="/js/site.js?v=4" defer></script>${scripts}
 <script src="/js/viewer.js?v=3" defer></script>
 </body>
 </html>`;
@@ -282,6 +289,7 @@ ${p.price != null ? `<p class="price" dir="ltr">${e(money(ctx, p.price))}</p>` :
 <div class="card-actions">
 <a class="btn btn-ghost" href="${e(url)}">${e(ctx.tr('card.details'))}</a>
 <a class="btn btn-wa" href="${e(waLink(ctx, productMessage(ctx, p)))}" target="_blank" rel="noopener" data-enquiry="${p.code}">${icon('wa')}<span>${e(ctx.tr(state === 'available' ? 'card.ask' : 'card.askPrice'))}</span></a>
+${ctx.studioOn && p.viz_enabled && p.texture_url ? `<a class="btn btn-studio" href="${e(`${ctx.prefix}/studio?product=${p.code}`)}">${icon('spark')}<span>${e(ctx.tr('st.visualize'))}</span></a>` : ''}
 </div>
 </div>
 </article>`;
@@ -340,12 +348,13 @@ ${sizes.length > 1 ? `<div class="chip-row" role="group" aria-label="${e(ctx.tr(
 <a class="btn btn-wa btn-lg" href="${e(waGeneral)}" target="_blank" rel="noopener">${icon('wa')}<span>${e(ctx.tr('cta.whatsapp'))}</span></a>
 <a class="btn btn-outline btn-lg" href="#products">${e(ctx.tr('cta.products'))}</a>
 </div>
+${ctx.studioOn ? `<a class="studio-cta" href="${e(`${ctx.prefix}/studio`)}">${icon('spark')}<span><strong>${e(ctx.tr('st.cta'))}</strong><small>${e(ctx.tr('st.ctaText'))}</small></span>${icon('arrow', 'flip-rtl')}</a>` : ''}
 </div>
 </section>
 
 <section class="section" id="products" aria-labelledby="products-title">
 <div class="wrap">
-<div class="section-head"><h2 id="products-title">${e(ctx.tr('products.title'))}</h2><p>${e(ctx.tr('products.lead'))}</p></div>
+<div class="section-head section-head-row"><div><h2 id="products-title">${e(ctx.tr('products.title'))}</h2><p>${e(ctx.tr('products.lead'))}</p></div>${ctx.studioOn ? `<a class="link-arrow" href="${e(`${ctx.prefix}/studio`)}">${icon('spark')} ${e(ctx.tr('st.cta'))}</a>` : ''}</div>
 <div id="catalog">${filters}${grid}</div>
 </div>
 </section>
@@ -508,6 +517,7 @@ ${pics.length > 1 ? `<div class="thumbs">${pics.map((img, i) => `<a href="${e(im
 <div class="product-status">${statusBadge(ctx, p)}${p.price != null ? `<span class="price-lg" dir="ltr">${e(money(ctx, p.price))}</span>` : ''}</div>
 ${p.price != null ? `<p class="note">${e(ctx.tr('product.priceNote'))}</p>` : ''}
 <a class="btn btn-wa btn-lg btn-block" href="${e(waLink(ctx, productMessage(ctx, p)))}" target="_blank" rel="noopener" data-enquiry="${p.code}">${icon('wa')}<span>${e(ctx.tr(state === 'available' ? 'product.ask' : 'product.askPrice'))}</span></a>
+${ctx.studioOn && p.viz_enabled && p.texture_url ? `<a class="btn btn-studio btn-lg btn-block studio-product-btn" href="${e(`${ctx.prefix}/studio?product=${p.code}`)}">${icon('spark')}<span>${e(ctx.tr('st.visualizeMine'))}</span></a>` : ''}
 <dl class="specs">
 <div><dt>${e(ctx.tr('product.no'))}</dt><dd dir="ltr">${productNo(p.code)}</dd></div>
 ${size ? `<div><dt>${e(ctx.tr('product.size'))}</dt><dd><span dir="ltr">${e(size)}</span> ${e(ctx.tr('cm'))}</dd></div>` : ''}
@@ -563,5 +573,121 @@ export function notFoundPage(ctx) {
     bodyClass: 'page-404',
     meta: { title: `${ctx.tr('notFound.title')} · ${ctx.shopName}`, description: ctx.tr('notFound.text'), image: ctx.hero, noindex: true },
     body: `<div class="wrap page-head not-found"><h1>${e(ctx.tr('notFound.title'))}</h1><p>${e(ctx.tr('notFound.text'))}</p><a class="btn btn-accent" href="${e(ctx.home)}">${e(ctx.tr('notFound.home'))}</a></div>`,
+  });
+}
+
+// ---------- AI Studio ----------
+const jsonForScript = (data) => JSON.stringify(data).replace(/</g, '\\u003c');
+
+export function studioPage(ctx, { products, categories, popularity, preselect, strings }) {
+  const s = ctx.settings;
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const data = {
+    lang: ctx.lang,
+    dir: ctx.dir,
+    strings,
+    shopName: ctx.shopName,
+    whatsapp: s.whatsapp_number,
+    currency: s.currency,
+    waste: Number(s.studio_waste_percent) || 10,
+    retentionDays: Number(s.studio_retention_days) || 90,
+    maxUploadMb: Number(s.studio_max_upload_mb) || 3,
+    prefix: ctx.prefix,
+    siteUrl: ctx.siteUrl,
+    preselect,
+    products: products.map((p) => ({
+      id: p.id,
+      code: p.code,
+      no: productNo(p.code),
+      name: localized(p, 'name', ctx.lang),
+      w: p.width_cm,
+      h: p.height_cm,
+      price: p.price,
+      availability: availability(p),
+      image: p.main_thumb || p.main_file || '',
+      url: `${ctx.prefix}/products/${p.code}`,
+      texture: p.viz_enabled && p.texture_url ? p.texture_url : '',
+      category: p.category_id && catMap.get(p.category_id) ? localized(catMap.get(p.category_id), 'name', ctx.lang) : '',
+      groutMm: p.grout_mm ?? 3,
+      groutColor: p.grout_color || '#8c877f',
+      popularity: popularity.get(p.id) || 0,
+    })),
+  };
+  const body = `
+<div class="studio-head wrap">
+<p class="eyebrow">${e(ctx.shopName)} · AI</p>
+<h1>${e(ctx.tr('st.title'))}</h1>
+<p class="studio-sub">${e(ctx.tr('st.subtitle'))}</p>
+<p class="studio-privacy">${icon('check')}<span>${e(ctx.tr('st.privacy'))}</span></p>
+</div>
+<div id="studio-root" class="studio-root"><p class="studio-loading">${e(ctx.tr('st.loadingApp'))}</p></div>
+<noscript><div class="wrap"><div class="empty"><p>${e(ctx.tr('st.noscript'))}</p></div></div></noscript>
+<script type="application/json" id="studio-data">${jsonForScript(data)}</script>`;
+  return layout(ctx, {
+    bodyClass: 'page-studio',
+    floatingWa: false,
+    meta: {
+      title: `${ctx.tr('st.title')} · ${ctx.tr('st.cta')}`,
+      description: `${ctx.tr('st.subtitle')} ${ctx.tr('st.ctaText')}`,
+      image: ctx.hero,
+      extraCss: '/css/studio.css?v=1',
+    },
+    scripts: '\n<script type="module" src="/js/studio.js?v=1"></script>',
+    body,
+  });
+}
+
+/** Read-only page for a shared design link. Never indexed. */
+export function sharePage(ctx, { project, token, product }) {
+  if (!project) {
+    return layout(ctx, {
+      bodyClass: 'page-share',
+      meta: { title: `${ctx.tr('st.title')} · ${ctx.shopName}`, description: ctx.tr('st.share.expired'), image: ctx.hero, noindex: true },
+      body: `<div class="wrap page-head not-found"><h1>${e(ctx.tr('st.share.expired'))}</h1><a class="btn btn-accent" href="${e(`${ctx.prefix}/studio`)}">${e(ctx.tr('st.share.try'))}</a></div>`,
+    });
+  }
+  const d = project.data || {};
+  const img = (idx, kind) => `/studio/v/${encodeURIComponent(token)}/img/${idx}/${kind}`;
+  const sourceKey = project.measurementStatus === 'verified' ? 'st.m.src.verified' : 'st.m.src.customer';
+  const rows = [
+    [ctx.tr('st.share.tile'), product ? `${productNo(product.code)} · ${localized(product, 'name', ctx.lang)}` : d.productName || ''],
+    [ctx.tr('st.m.tile'), d.tileSize ? `${d.tileSize} ${ctx.tr('cm')}` : ''],
+    [ctx.tr('st.m.area'), d.area ? `${d.area} m²` : ''],
+    [ctx.tr('st.m.total'), d.tiles ? `${d.tiles} ${ctx.tr('st.m.pcs')}${d.waste != null ? ` (${ctx.tr('st.m.withWaste', { p: d.waste })})` : ''}` : ''],
+    [ctx.tr('st.s.ref'), project.ref],
+  ].filter(([, v]) => v);
+  const body = `
+<div class="wrap page-head">
+<p class="eyebrow">${e(ctx.tr('st.title'))}</p>
+<h1>${e(ctx.tr('st.share.title', { ref: project.ref }))}</h1>
+<p>${e(ctx.tr('st.share.lead'))}</p>
+<p class="note">${e(ctx.tr('st.share.private'))}</p>
+</div>
+<div class="wrap share-body">
+${project.views
+  .map(
+    (v) => `<section class="share-view">
+<h2 class="h-sm">${e(ctx.tr('st.share.photo', { n: v.idx + 1 }))}</h2>
+<div class="share-pair">
+<figure><img src="${e(img(v.idx, 'original'))}" alt="${e(ctx.tr('st.view.original'))}" loading="lazy"><figcaption>${e(ctx.tr('st.view.original'))}</figcaption></figure>
+${v.hasResult ? `<figure><img src="${e(img(v.idx, 'result'))}" alt="${e(ctx.tr('st.view.design'))}" loading="lazy"><figcaption>${e(ctx.tr('st.view.design'))}</figcaption></figure>` : ''}
+</div>
+</section>`,
+  )
+  .join('')}
+<dl class="specs">${rows.map(([k, v]) => `<div><dt>${e(k)}</dt><dd>${e(v)}</dd></div>`).join('')}</dl>
+<p class="note">${e(ctx.tr(sourceKey))}. ${e(ctx.tr('st.m.note'))}</p>
+${project.description ? `<h2 class="h-sm">${e(ctx.tr('st.share.notes'))}</h2><p class="product-desc">${e(project.description)}</p>` : ''}
+<a class="btn btn-accent" href="${e(`${ctx.prefix}/studio`)}">${e(ctx.tr('st.share.try'))}</a>
+</div>`;
+  return layout(ctx, {
+    bodyClass: 'page-share',
+    meta: {
+      title: `${ctx.tr('st.share.title', { ref: project.ref })} · ${ctx.shopName}`,
+      description: ctx.tr('st.share.lead'),
+      image: ctx.hero,
+      noindex: true,
+    },
+    body,
   });
 }

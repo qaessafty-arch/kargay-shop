@@ -3,7 +3,7 @@ import { config } from './config.js';
 // One query shape used by both the public page and the admin list, so both show the same data.
 const PRODUCT_SELECT = `
   SELECT p.id, p.code, p.name, p.description, p.name_ar, p.name_en, p.description_ar, p.description_en, p.category_id, p.width_cm, p.height_cm, p.price,
-         p.stock, p.visible, p.featured, p.sort, p.enquiry_count, p.created_at, p.updated_at, p.deleted_at,
+         p.stock, p.visible, p.featured, p.texture_url, p.texture_thumb, p.viz_enabled, p.grout_mm, p.grout_color, p.sort, p.enquiry_count, p.created_at, p.updated_at, p.deleted_at,
          c.name AS category_name, c.name_ar AS category_name_ar, c.name_en AS category_name_en,
          (SELECT file FROM product_images i WHERE i.product_id = p.id ORDER BY i.sort, i.id LIMIT 1) AS main_file,
          (SELECT thumb FROM product_images i WHERE i.product_id = p.id ORDER BY i.sort, i.id LIMIT 1) AS main_thumb,

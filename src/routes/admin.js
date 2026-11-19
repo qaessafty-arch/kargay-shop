@@ -4,8 +4,11 @@ import { config } from '../config.js';
 import { hashPassword, requireAuth, requireCsrf, requireRole } from '../auth.js';
 import { audit } from '../audit.js';
 import { allCategories, availability, findProduct, findProductByCode, galleryImages, getSettings, listProducts, renumberImages } from '../catalog.js';
-import { removeUpload, storeImage, storeProductImage } from '../uploads.js';
+import path from 'node:path';
+import { removeUpload, storeImage, storeProductImage, uploadsRoot } from '../uploads.js';
 import { importLegacyBatch, loadManifest } from '../legacy-import.js';
+import { projectRef, projectWithViews, purgeExpiredProjects } from '../studio.js';
+import { sendViewImage } from './studio.js';
 import {
   categoryPatchSchema,
   categorySchema,
@@ -45,6 +48,11 @@ function productJson(row) {
     descriptionAr: row.description_ar,
     descriptionEn: row.description_en,
     availability: availability(row),
+    textureUrl: row.texture_url || '',
+    textureThumb: row.texture_thumb || '',
+    vizEnabled: !!row.viz_enabled,
+    groutMm: row.grout_mm,
+    groutColor: row.grout_color,
     categoryId: row.category_id,
     categoryName: row.category_name,
     widthCm: row.width_cm,
@@ -181,8 +189,8 @@ export function adminRouter({ db, writeLimiter }) {
       if (await findProductByCode(tx, code)) return { error: 'That product code is already used.' };
       const info = await tx.run(
         `INSERT INTO products (code, name, name_ar, name_en, description, description_ar, description_en, category_id,
-           width_cm, height_cm, price, stock, visible, featured, sort, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+           width_cm, height_cm, price, stock, visible, featured, sort, viz_enabled, grout_mm, grout_color, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
           code,
           d.name,
@@ -199,6 +207,9 @@ export function adminRouter({ db, writeLimiter }) {
           d.visible ? 1 : 0,
           d.featured ? 1 : 0,
           d.sort ?? code,
+          d.vizEnabled ? 1 : 0,
+          d.groutMm,
+          d.groutColor,
           now,
           now,
         ],
@@ -223,6 +234,7 @@ export function adminRouter({ db, writeLimiter }) {
       code: 'code', name: 'name', nameAr: 'name_ar', nameEn: 'name_en', description: 'description',
       descriptionAr: 'description_ar', descriptionEn: 'description_en', categoryId: 'category_id', widthCm: 'width_cm',
       heightCm: 'height_cm', price: 'price', stock: 'stock', visible: 'visible', featured: 'featured', sort: 'sort',
+      vizEnabled: 'viz_enabled', groutMm: 'grout_mm', groutColor: 'grout_color',
     };
     const sets = [];
     const values = [];
@@ -334,6 +346,57 @@ export function adminRouter({ db, writeLimiter }) {
     await removeUpload(row.thumb);
     await audit(db, { userId: req.auth.user.id, action: 'product.image.delete', entity: 'product', entityId: row.product_id });
     res.json({ images: await imagesFor(db, row.product_id) });
+  });
+
+  // ---------- Visualization texture (AI Studio) ----------
+  // One flat, straight-on photo of a single tile face, cropped to its edges. Used as the real tile surface in the Studio.
+  router.post('/products/:id/texture', ...write, any, upload.single('file'), async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const product = await findProduct(db, id.data);
+    if (!product || product.deleted_at) return res.status(404).json({ error: 'Product not found.' });
+    if (!req.file) return res.status(400).json({ error: 'Choose a JPEG, PNG or WebP image (up to 6 MB).' });
+    let stored;
+    try {
+      stored = await storeImage(req.file.buffer, `products/${product.code}`);
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'The image could not be read.' });
+    }
+    await db.run('UPDATE products SET texture_url = ?, texture_thumb = ?, updated_at = ? WHERE id = ?', [stored.file, stored.thumb, Date.now(), id.data]);
+    await removeUpload(product.texture_url);
+    await removeUpload(product.texture_thumb);
+    await audit(db, { userId: req.auth.user.id, action: 'product.texture', entity: 'product', entityId: id.data });
+    res.json(productJson(await findProduct(db, id.data)));
+  });
+
+  // A product photo served from this site, so the crop tool can read its pixels (photos may live on another domain).
+  router.get('/images/:imageId/raw', any, async (req, res) => {
+    const imageId = idOf(req.params.imageId);
+    if (!imageId.success) return res.status(400).end();
+    const row = await db.get('SELECT file FROM product_images WHERE id = ?', [imageId.data]);
+    if (!row) return res.status(404).end();
+    if (row.file.startsWith('/uploads/')) {
+      const file = path.resolve(uploadsRoot, row.file.slice('/uploads/'.length));
+      return file.startsWith(uploadsRoot + path.sep) ? res.sendFile(file) : res.status(404).end();
+    }
+    if (row.file.startsWith('/')) return res.redirect(302, row.file);
+    if (!/^https:\/\/[a-z0-9.-]+\.public\.blob\.vercel-storage\.com\//.test(row.file)) return res.status(404).end();
+    const upstream = await fetch(row.file);
+    if (!upstream.ok) return res.status(502).end();
+    res.set({ 'Content-Type': upstream.headers.get('content-type') || 'image/webp', 'Cache-Control': 'private, max-age=600' });
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  });
+
+  router.delete('/products/:id/texture', ...write, any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const product = await findProduct(db, id.data);
+    if (!product) return res.status(404).json({ error: 'Product not found.' });
+    await db.run("UPDATE products SET texture_url = '', texture_thumb = '', viz_enabled = 0, updated_at = ? WHERE id = ?", [Date.now(), id.data]);
+    await removeUpload(product.texture_url);
+    await removeUpload(product.texture_thumb);
+    await audit(db, { userId: req.auth.user.id, action: 'product.texture.remove', entity: 'product', entityId: id.data });
+    res.json(productJson(await findProduct(db, id.data)));
   });
 
   // ---------- Categories ----------
@@ -677,6 +740,88 @@ export function adminRouter({ db, writeLimiter }) {
     await db.run('DELETE FROM sessions WHERE user_id = ?', [id.data]);
     await audit(db, { userId: req.auth.user.id, action: 'user.password_reset', entity: 'user', entityId: id.data });
     res.json({ ok: true });
+  });
+
+  // ---------- AI Studio (projects, reports, usage) ----------
+  router.get('/studio/projects', any, async (req, res) => {
+    await purgeExpiredProjects(db);
+    const rows = await db.all(
+      `SELECT p.id, p.lang, p.description, p.data, p.measurement_status, p.created_at, p.expires_at,
+              (SELECT COUNT(*) FROM studio_views v WHERE v.project_id = p.id) AS views,
+              (SELECT COUNT(*) FROM studio_reports r WHERE r.project_id = p.id AND r.resolved_at IS NULL) AS open_reports
+         FROM studio_projects p ORDER BY p.created_at DESC LIMIT 200`,
+    );
+    res.json({
+      items: rows.map((r) => {
+        const data = JSON.parse(r.data || '{}');
+        return {
+          id: r.id, ref: projectRef(r.id), lang: r.lang, description: r.description, views: r.views, openReports: r.open_reports,
+          productCode: data.productCode ?? null, productName: data.productName ?? '', area: data.area ?? null, tiles: data.tiles ?? null,
+          measurementStatus: r.measurement_status, createdAt: r.created_at, expiresAt: r.expires_at,
+        };
+      }),
+    });
+  });
+
+  router.get('/studio/projects/:id', any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const project = await db.get('SELECT * FROM studio_projects WHERE id = ?', [id.data]);
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const reports = await db.all('SELECT id, message, created_at, resolved_at FROM studio_reports WHERE project_id = ? ORDER BY created_at DESC', [id.data]);
+    res.set('Cache-Control', 'no-store').json({ ...(await projectWithViews(db, project)), reports });
+  });
+
+  router.get('/studio/projects/:id/views/:idx/:kind', any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).end();
+    await sendViewImage(db, res, id.data, req.params.idx, req.params.kind);
+  });
+
+  // The factory can mark a customer's measurements as checked on site.
+  router.patch('/studio/projects/:id', ...write, any, async (req, res) => {
+    const id = idOf(req.params.id);
+    const status = req.body?.measurementStatus;
+    if (!id.success || !['customer', 'verified'].includes(status)) return res.status(400).json({ error: 'Invalid request.' });
+    const info = await db.run('UPDATE studio_projects SET measurement_status = ? WHERE id = ?', [status, id.data]);
+    if (!info.changes) return res.status(404).json({ error: 'Project not found.' });
+    await audit(db, { userId: req.auth.user.id, action: 'studio.measurements', entity: 'studio_project', entityId: id.data, detail: { status } });
+    res.json({ ok: true });
+  });
+
+  router.delete('/studio/projects/:id', ...write, owner, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const info = await db.run('DELETE FROM studio_projects WHERE id = ?', [id.data]);
+    if (!info.changes) return res.status(404).json({ error: 'Project not found.' });
+    await audit(db, { userId: req.auth.user.id, action: 'studio.delete', entity: 'studio_project', entityId: id.data });
+    res.json({ ok: true });
+  });
+
+  router.get('/studio/reports', any, async (req, res) => {
+    const rows = await db.all(
+      'SELECT id, project_id, message, created_at, resolved_at FROM studio_reports ORDER BY resolved_at IS NOT NULL, created_at DESC LIMIT 200',
+    );
+    res.json({ items: rows.map((r) => ({ ...r, ref: r.project_id ? projectRef(r.project_id) : null })) });
+  });
+
+  router.post('/studio/reports/:id/resolve', ...write, any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    await db.run('UPDATE studio_reports SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL', [Date.now(), id.data]);
+    res.json({ ok: true });
+  });
+
+  router.get('/studio/stats', any, async (req, res) => {
+    const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const events = await db.all('SELECT kind, COUNT(*) AS n FROM studio_events WHERE at >= ? GROUP BY kind', [since]);
+    const byKind = Object.fromEntries(events.map((e) => [e.kind, e.n]));
+    const [projects, openReports, vizProducts] = await Promise.all([
+      db.get('SELECT COUNT(*) AS n FROM studio_projects WHERE expires_at > ?', [Date.now()]),
+      db.get('SELECT COUNT(*) AS n FROM studio_reports WHERE resolved_at IS NULL'),
+      db.get("SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND viz_enabled = 1 AND texture_url <> ''"),
+    ]);
+    res.json({ last30Days: byKind, savedProjects: projects.n, openReports: openReports.n, vizProducts: vizProducts.n });
   });
 
   // ---------- Original products import (owner) ----------

@@ -9,7 +9,8 @@ import { uploadsRoot } from './uploads.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { setupRouter } from './routes/setup.js';
-import { notFoundHandler, publicRouter, staticRouter } from './routes/public.js';
+import { notFoundHandler, publicRouter, renderSharePage, staticRouter } from './routes/public.js';
+import { studioApiRouter, studioShareRouter } from './routes/studio.js';
 
 /** Builds the Express app. Tests pass their own in-memory database. */
 export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
@@ -25,7 +26,8 @@ export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
         useDefaults: true,
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'"],
+          // 'wasm-unsafe-eval' only allows compiling WebAssembly (the on-device floor-detection model), not eval().
+          scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           imgSrc: ["'self'", 'data:', 'blob:', 'https://*.public.blob.vercel-storage.com'],
@@ -57,6 +59,10 @@ export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
   app.use('/api/auth', authRouter({ db, loginLimiter, passwordLimiter }));
   app.use('/api/setup', setupRouter({ db, limiter: loginLimiter }));
   app.use('/api/admin', adminRouter({ db, writeLimiter }));
+  // Saving designs and photo uploads are limited per visitor so the Studio cannot be used as free storage.
+  const studioLimiter = limit({ windowMs: 60 * 60 * 1000, limit: 60 });
+  app.use('/api/studio', studioApiRouter({ db, limiter: studioLimiter }));
+  app.use(studioShareRouter({ db, renderShare: (req, project, token) => renderSharePage(db, req, project, token) }));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
   app.use(notFoundHandler({ db }));

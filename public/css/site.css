@@ -434,3 +434,21 @@ a.contact-item:hover { border-color: var(--border-strong); }
   background: var(--wm) no-repeat center / contain; opacity: 0.45;
 }
 .no-js .site-header.is-overlay { position: absolute; }
+
+/* Entry points on the rest of the site */
+.studio-cta {
+  display: flex; align-items: center; gap: var(--s3); margin-top: var(--s5); max-width: 560px; padding: var(--s3) var(--s4);
+  border: 1px solid var(--accent); border-radius: var(--radius); background: rgba(20, 20, 20, 0.7); text-decoration: none;
+}
+.studio-cta > .ic { color: var(--accent); width: 26px; height: 26px; }
+.studio-cta span { display: grid; flex: 1; }
+.studio-cta strong { color: var(--accent); font-size: 16px; text-transform: uppercase; letter-spacing: 0.03em; }
+.lang-ku .studio-cta strong, .lang-ar .studio-cta strong { text-transform: none; letter-spacing: 0; }
+.studio-cta small { color: #cfcac2; font-size: 14px; }
+.studio-cta:hover { background: rgba(210, 180, 140, 0.12); }
+
+.btn-studio { border: 1px solid var(--accent); color: var(--accent); background: transparent; }
+.btn-studio:hover { background: rgba(210, 180, 140, 0.12); }
+.card-actions .btn-studio { grid-column: 1 / -1; }
+.studio-product-btn { margin-top: calc(-1 * var(--s3)) !important; margin-bottom: var(--s5) !important; }
+.nav-studio { color: var(--accent) !important; }

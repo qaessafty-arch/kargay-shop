@@ -133,3 +133,12 @@ td.nowrap { white-space: nowrap; }
 .site-image { display: block; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #0f0f0f; object-fit: cover; }
 .site-image.logo { width: 96px; height: 96px; object-fit: contain; background: #fff; }
 .site-image.hero { width: 100%; height: 160px; }
+
+/* ---------- AI Studio ---------- */
+.studio-pair { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.studio-pair figure { margin: 0; }
+.studio-pair img { width: 100%; border-radius: 6px; border: 1px solid var(--line); display: block; }
+.studio-pair figcaption { color: var(--muted); font-size: 13px; margin-top: 4px; }
+.crop-stage { position: relative; max-width: 520px; margin: 10px 0; user-select: none; touch-action: none; }
+.crop-img { display: block; width: 100%; border-radius: 6px; }
+.crop-frame { position: absolute; border: 2px solid var(--accent); background: rgba(210, 180, 140, 0.12); cursor: move; box-sizing: border-box; }

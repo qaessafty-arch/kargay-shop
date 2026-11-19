@@ -60,6 +60,11 @@ export const config = {
     default_language: 'ku',
     logo_url: '',
     hero_url: '',
+    // AI Studio
+    studio_enabled: '1',
+    studio_retention_days: '90',
+    studio_max_upload_mb: '3',
+    studio_waste_percent: '10',
     seo_title_ku: 'کارگەی شرێ · کاشیی باخچە و حەوشە',
     seo_title_ar: 'كارگە شري | بلاط الحدائق والساحات',
     seo_title_en: 'Kargay Shre | Garden & Courtyard Tiles',

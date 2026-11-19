@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from './config.js';
 import { audit } from './audit.js';
 import { renumberImages } from './catalog.js';
-import { storeProductImage } from './uploads.js';
+import { storeImage, storeProductImage } from './uploads.js';
 
 // The original page's products and photos, extracted by scripts/legacy/convert-legacy.py.
 const legacyDir = path.join(config.root, 'scripts', 'legacy');
@@ -39,6 +39,34 @@ async function categoryId(db, name) {
  * Safe to call repeatedly: products whose code already exists (including deleted ones) are skipped.
  * Returns { imported, failed, remaining }.
  */
+const textureFile = (code) => path.join(legacyDir, 'textures', `${code}.webp`);
+
+/**
+ * Prepared visualization textures (cropped from the product's own straight-on photo) for the AI Studio.
+ * Attached once per product; a texture the owner later removes or replaces is left alone.
+ */
+async function attachLegacyTexture(db, productId, code) {
+  if (!fs.existsSync(textureFile(code))) return false;
+  const stored = await storeImage(fs.readFileSync(textureFile(code)), `products/${code}`);
+  await db.run("UPDATE products SET texture_url = ?, texture_thumb = ?, viz_enabled = 1 WHERE id = ? AND texture_url = ''", [stored.file, stored.thumb, productId]);
+  return true;
+}
+
+/** For shops that imported the products before textures existed: attach them once. */
+async function backfillLegacyTextures(db) {
+  const done = await db.get("SELECT value FROM settings WHERE key = 'legacy_textures_done'");
+  if (done?.value === '1') return 0;
+  let count = 0;
+  for (const row of await db.all("SELECT id, code FROM products WHERE texture_url = '' AND deleted_at IS NULL")) {
+    if (await attachLegacyTexture(db, row.id, row.code)) count++;
+  }
+  await db.run(
+    "INSERT INTO settings (key, value, updated_at) VALUES ('legacy_textures_done', '1', ?) ON CONFLICT (key) DO UPDATE SET value = '1', updated_at = excluded.updated_at",
+    [Date.now()],
+  );
+  return count;
+}
+
 export async function importLegacyBatch(db, { limit = 6, userId = null } = {}) {
   const { products } = loadManifest();
   const existing = new Set((await db.all('SELECT code FROM products')).map((row) => row.code));
@@ -74,11 +102,14 @@ export async function importLegacyBatch(db, { limit = 6, userId = null } = {}) {
         ]);
       }
       await renumberImages(tx, info.id);
+      await attachLegacyTexture(tx, info.id, item.number);
       await audit(tx, { userId, action: 'product.import', entity: 'product', entityId: info.id, detail: { code: item.number, source: 'legacy-page' } });
     });
     imported++;
   }
 
   // Failed products are still pending and will be retried on the next call.
-  return { imported, failed, remaining: pending.length - imported };
+  const remaining = pending.length - imported;
+  const textures = remaining === 0 ? await backfillLegacyTextures(db) : 0;
+  return { imported, failed, remaining, textures };
 }

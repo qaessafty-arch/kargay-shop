@@ -2,6 +2,8 @@
 // Every page is rendered on the server in one language, so search engines and link previews
 // always see the right text without running any JavaScript.
 
+import { STUDIO_STRINGS } from './i18n-studio.js';
+
 export const LANGS = ['ku', 'ar', 'en'];
 
 export const LANG_META = {
@@ -159,6 +161,18 @@ const S = {
   ],
   'wa.size': ['، قەبارە {size}', '، المقاس {size}', ', size {size}'],
 };
+
+Object.assign(S, STUDIO_STRINGS);
+S['nav.studio'] = ['ستۆدیۆی AI', 'استوديو AI', 'AI Studio'];
+
+/** The interface text the Studio's browser script needs, in one language. */
+export function clientStrings(lang) {
+  const out = {};
+  for (const key of Object.keys(S)) {
+    if (/^(st|status)\./.test(key) || ['cm', 'card.details', 'product.no'].includes(key)) out[key] = t(lang, key);
+  }
+  return out;
+}
 
 /** Looks up interface text; falls back to Kurdish, then to the key itself. */
 export function t(lang, key, vars = {}) {

@@ -134,6 +134,48 @@ taken back to it next time. Old shared links like `/#tile-05` open the product p
 - **Orders, users, audit log and My account** as before. Stock goes down when an order is confirmed or
   delivered and comes back if it is cancelled.
 
+## AI Studio
+
+Customers design their own courtyard at `/studio` (`/ar/studio`, `/en/studio`):
+
+1. **Photo**: upload photos (or take one with the phone camera, or pick a frame from a video).
+2. **Floor selection (AI)**: [SlimSAM-77](https://huggingface.co/nielsr/slimsam-77-uniform), a compact
+   *Segment Anything* model (**Apache-2.0**, commercial use allowed), runs **in the customer's browser** with
+   ONNX Runtime Web (files in `public/models` and `public/vendor`, about 14 MB, cached by the browser after the
+   first use). It selects the floor from points across the lower part of the photo and finds its exact edges; the
+   customer taps to add a missed area or to remove a plant, piece of furniture or wall. Photos are not uploaded for
+   this, and no AI service, account or API key is needed. It does not name what it sees (walls, plants…); it finds
+   the boundaries of the surface the customer points at.
+   Models considered and not used: SegFormer (NVIDIA licence: non-commercial only) and a DETR panoptic export
+   (too inaccurate in tests on the shop's photos).
+3. **Correction**: tap to add/remove (AI), Add/Remove brush, undo/redo, back to the AI result, and four perspective corners placed on a
+   real rectangle of the floor.
+4. **Products**: suggestions ranked from colours and brightness measured in the photo and the floor size, with the
+   reasons shown; "popular" uses only real enquiry and quote counts; or any product.
+5. **Tile application**: the product's real texture is laid in perspective at its real size, with grout width and
+   colour, straight or offset pattern, rotation, direction, shift and scale correction; the photo's light and
+   shadows are kept, and tiles only appear inside the selected area.
+6. **3D**: an exact *3D floor model* from the entered size, and an *estimated photo in 3D* reconstructed from one
+   photo and the marked rectangle. The second is labelled as an approximation and is refused when the corners do
+   not describe a believable camera. Multi-photo, video or LiDAR reconstruction is **not** implemented.
+7. **Measurements**: length/width of the marked rectangle, total floor area, extra sections, cutting allowance;
+   tiles per m² and total to order from the real tile size including grout; an approximate area measured in the
+   photo. Labelled as entered by the customer / estimated from the photo / verified by the factory.
+8. **Designs**: keep several designs and compare them with a before/after slider or side by side.
+9. **Save, share, send**: saving needs explicit consent. Photos are stored privately in the database with their
+   metadata (including GPS) removed; the customer gets an owner key (only its hash is stored), a share link that is
+   signed and expires after 30 days, can delete the project, and can report a problem. Projects are deleted
+   automatically after the retention period. "Send my design" opens WhatsApp with the product, size, area,
+   quantity, project reference (KS-0001) and the share link.
+
+**Textures**: a product appears in the Studio only when it has a texture (one straight-on photo of a single tile,
+cropped to its edges) and *Customers can preview* is ticked. In the admin, open a product and use **AI Studio
+texture**: upload one, or crop it from one of the product's photos. Six textures (#3, #9, #11, #12, #19, #22) were
+cropped from the original photos and are attached when the original products are imported; check them.
+
+The admin **AI Studio** tab has the settings (on/off, retention days, photo size limit, cutting allowance), usage
+numbers, customer projects with their photos, "measurements verified" and problem reports.
+
 ## Monitoring
 
 `GET /api/health` returns `{"ok":true}` when the site and database are working. Set `SITE_URL`
@@ -156,7 +198,9 @@ taken back to it next time. Old shared links like `/#tile-05` open the product p
 | `src/auth.js` | Passwords, sessions, roles, CSRF |
 | `src/uploads.js` | Image validation and WebP conversion |
 | `src/views.js` | Public pages (home, product, gallery, 404) |
-| `src/i18n.js` | Kurdish, Arabic and English interface text |
+| `src/i18n.js`, `src/i18n-studio.js` | Kurdish, Arabic and English interface text |
+| `src/studio.js`, `src/routes/studio.js` | AI Studio projects, privacy, share links |
+| `public/js/studio*.js` | AI Studio in the browser (detection worker, renderer, 3D) |
 | `public/admin/` | Admin interface |
 | `scripts/create-admin.js` | Creates the owner account |
 | `scripts/import-legacy.js` | Imports the original page's products (run once) |

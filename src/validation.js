@@ -27,6 +27,9 @@ export const productSchema = z.object({
   visible: z.boolean().default(true),
   featured: z.boolean().default(false),
   sort: z.number().int().min(-100000).max(100000).optional(),
+  vizEnabled: z.boolean().default(false),
+  groutMm: z.number().int().min(0).max(30).default(3),
+  groutColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Grout colour must look like #8c877f.').default('#8c877f'),
 });
 
 // Defaults would turn missing fields into '' on update, so the patch schema is built without them.
@@ -39,6 +42,9 @@ export const productPatchSchema = productSchema
     descriptionEn: trimmed(1000).optional(),
     visible: z.boolean().optional(),
     featured: z.boolean().optional(),
+    vizEnabled: z.boolean().optional(),
+    groutMm: z.number().int().min(0).max(30).optional(),
+    groutColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Grout colour must look like #8c877f.').optional(),
   })
   .partial();
 
@@ -111,6 +117,10 @@ export const settingsSchema = z
     founded_year: z.string().trim().regex(/^[0-9]{4}$/, 'Use a four-digit year.'),
     currency: z.string().trim().regex(/^[A-Z]{3}$/, 'Use a three-letter currency code, e.g. IQD.'),
     default_language: z.enum(['ku', 'ar', 'en']),
+    studio_enabled: z.enum(['0', '1']),
+    studio_retention_days: z.string().trim().regex(/^\d{1,3}$/, 'Keep projects for 1–365 days.').refine((v) => Number(v) >= 1 && Number(v) <= 365, 'Keep projects for 1–365 days.'),
+    studio_max_upload_mb: z.string().trim().regex(/^[1-3]$/, 'Photo size limit: 1, 2 or 3 MB.'),
+    studio_waste_percent: z.string().trim().regex(/^\d{1,2}$/, 'Cutting allowance: 0–30 %.').refine((v) => Number(v) <= 30, 'Cutting allowance: 0–30 %.'),
     seo_title_ku: trimmed(90),
     seo_title_ar: trimmed(90),
     seo_title_en: trimmed(90),
@@ -152,3 +162,18 @@ export function parse(schema, value) {
   const issue = result.error.issues[0];
   return { error: issue?.message || 'Invalid input.' };
 }
+
+// ---------- AI Studio ----------
+export const studioProjectSchema = z.object({
+  consent: z.literal(true, { errorMap: () => ({ message: 'Please agree to store your photos before saving.' }) }),
+  lang: z.enum(['ku', 'ar', 'en']).default('ku'),
+  description: trimmed(1000).default(''),
+  data: z.record(z.any()).default({}),
+});
+
+export const studioProjectPatchSchema = z.object({
+  description: trimmed(1000).optional(),
+  data: z.record(z.any()).optional(),
+});
+
+export const studioReportSchema = z.object({ message: trimmed(1000).min(3, 'Please describe the problem.') });

@@ -614,3 +614,134 @@ describe('multilingual showroom', () => {
     assert.equal(p.availability, 'available');
   });
 });
+
+describe('AI Studio', () => {
+  const png = (w = 120, h = 90) => sharp({ create: { width: w, height: h, channels: 3, background: '#808080' } }).png().toBuffer();
+  const json = (method, url, body, key) => {
+    const headers = { 'content-type': 'application/json' };
+    if (key) headers['x-project-key'] = key;
+    return fetch(base + url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  };
+
+  test('the Studio page renders in each language with its data, and the product needs a texture to be offered', async () => {
+    for (const [path, lang] of [['/studio', 'ku'], ['/ar/studio', 'ar'], ['/en/studio', 'en']]) {
+      const res = await call('GET', path);
+      assert.equal(res.status, 200, path);
+      const data = JSON.parse(res.text.match(/<script type="application\/json" id="studio-data">([\s\S]*?)<\/script>/)[1]);
+      assert.equal(data.lang, lang);
+      assert.ok(data.strings['st.title']);
+      assert.ok(Array.isArray(data.products));
+    }
+    const { cookie, csrf } = await login(owner);
+    const p = await call('POST', '/api/admin/products', { cookie, csrf, body: { code: 90, name: 'Studio tile', widthCm: 40, heightCm: 40, vizEnabled: true } });
+    const form = new FormData();
+    form.append('file', new Blob([await png(256, 256)], { type: 'image/png' }), 't.png');
+    const tex = await call('POST', `/api/admin/products/${p.json.id}/texture`, { cookie, csrf, form });
+    assert.equal(tex.status, 200, tex.text);
+    assert.match(tex.json.textureUrl, /^\/uploads\/products\/90\/[a-f0-9]{24}\.webp$/);
+    const texture = await call('GET', '/api/studio/textures/90');
+    assert.equal(texture.status, 200);
+    assert.match(texture.headers.get('content-type'), /image\/webp/);
+    assert.equal((await call('GET', '/api/studio/textures/1')).status, 404, 'no texture, no preview');
+    assert.match((await call('GET', '/en/products/90')).text, /href="\/en\/studio\?product=90"/);
+  });
+
+  test('projects need consent; the owner key is required for every read and change', async () => {
+    const refused = await json('POST', '/api/studio/projects', { consent: false });
+    assert.equal(refused.status, 400);
+    const created = await (await json('POST', '/api/studio/projects', { consent: true, lang: 'en', description: 'Front yard', data: { productCode: 90 } })).json();
+    assert.match(created.ref, /^KS-\d{4}$/);
+    assert.ok(created.key.length >= 30);
+    assert.equal((await json('GET', `/api/studio/projects/${created.id}`)).status, 404, 'no key');
+    assert.equal((await json('GET', `/api/studio/projects/${created.id}`, null, 'x'.repeat(32))).status, 404, 'wrong key');
+    const ok = await json('GET', `/api/studio/projects/${created.id}`, null, created.key);
+    assert.equal(ok.status, 200);
+    assert.equal((await ok.json()).description, 'Front yard');
+    const row = await db.get('SELECT owner_hash FROM studio_projects WHERE id = ?', [created.id]);
+    assert.notEqual(row.owner_hash, created.key, 'only a hash of the key is stored');
+  });
+
+  test('saved photos are re-encoded with location metadata removed and served only with the key', async () => {
+    const created = await (await json('POST', '/api/studio/projects', { consent: true })).json();
+    const withGps = await sharp({ create: { width: 200, height: 150, channels: 3, background: '#a0a0a0' } })
+      .withExif({ IFD0: { Make: 'TestPhone' }, IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '36/1 50/1 0/1' } })
+      .jpeg().toBuffer();
+    assert.ok((await sharp(withGps).metadata()).exif, 'test photo starts with EXIF');
+    const form = new FormData();
+    form.append('original', new Blob([withGps], { type: 'image/jpeg' }), 'o.jpg');
+    form.append('result', new Blob([await png()], { type: 'image/png' }), 'r.png');
+    form.append('mask', new Blob([await png()], { type: 'image/png' }), 'm.png');
+    form.append('data', JSON.stringify({ rect: { length: 4, width: 3 } }));
+    const put = await fetch(`${base}/api/studio/projects/${created.id}/views/0`, { method: 'PUT', headers: { 'x-project-key': created.key }, body: form });
+    assert.equal(put.status, 200, await put.text());
+    const noKey = await fetch(`${base}/api/studio/projects/${created.id}/views/0/original`);
+    assert.equal(noKey.status, 404);
+    const img = await fetch(`${base}/api/studio/projects/${created.id}/views/0/original`, { headers: { 'x-project-key': created.key } });
+    assert.equal(img.status, 200);
+    assert.equal(img.headers.get('cache-control'), 'private, no-store');
+    const meta = await sharp(Buffer.from(await img.arrayBuffer())).metadata();
+    assert.equal(meta.exif, undefined, 'EXIF (including GPS) is removed');
+    const tooMany = await fetch(`${base}/api/studio/projects/${created.id}/views/9`, { method: 'PUT', headers: { 'x-project-key': created.key }, body: form });
+    assert.equal(tooMany.status, 400);
+  });
+
+  test('share links are signed, expire, and show a private noindex page', async () => {
+    const created = await (await json('POST', '/api/studio/projects', { consent: true, lang: 'ar' })).json();
+    const share = await (await json('POST', `/api/studio/projects/${created.id}/share`, null, created.key)).json();
+    assert.match(share.path, /^\/studio\/v\/\d+\.\d{13}\.[A-Za-z0-9_-]{32}$/);
+    const page = await call('GET', share.path);
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('x-robots-tag'), 'noindex, nofollow');
+    assert.match(page.text, /<html lang="ar"/);
+    assert.match(page.text, new RegExp(created.ref));
+    const tampered = share.path.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A'));
+    assert.equal((await call('GET', tampered)).status, 404);
+    const otherProject = share.path.replace(/\/v\/\d+\./, `/v/${created.id + 1000}.`);
+    assert.equal((await call('GET', otherProject)).status, 404, 'the signature covers the project id');
+    const { createShareToken, verifyShareToken } = await import('../src/studio.js');
+    const expired = await createShareToken(db, created.id, -1);
+    assert.equal(await verifyShareToken(db, expired.token), null);
+  });
+
+  test('customers can report a problem and delete their project; expired projects are purged', async () => {
+    const created = await (await json('POST', '/api/studio/projects', { consent: true })).json();
+    assert.equal((await json('POST', `/api/studio/projects/${created.id}/report`, { message: 'The pool was tiled' }, created.key)).status, 201);
+    const { cookie } = await login(staff);
+    const reports = await call('GET', '/api/admin/studio/reports', { cookie });
+    assert.ok(reports.json.items.some((r) => r.message === 'The pool was tiled'));
+    assert.equal((await json('DELETE', `/api/studio/projects/${created.id}`, null, created.key)).status, 200);
+    assert.equal(await db.get('SELECT id FROM studio_projects WHERE id = ?', [created.id]), undefined);
+    const old = await (await json('POST', '/api/studio/projects', { consent: true })).json();
+    await db.run('UPDATE studio_projects SET expires_at = ? WHERE id = ?', [Date.now() - 1000, old.id]);
+    await json('POST', '/api/studio/projects', { consent: true });
+    assert.equal(await db.get('SELECT id FROM studio_projects WHERE id = ?', [old.id]), undefined);
+  });
+
+  test('shop staff see projects and can verify measurements; only the owner deletes', async () => {
+    const created = await (await json('POST', '/api/studio/projects', { consent: true, data: { productCode: 90, area: 24, tiles: 163 } })).json();
+    const staffSession = await login(staff);
+    const list = await call('GET', '/api/admin/studio/projects', { cookie: staffSession.cookie });
+    const item = list.json.items.find((p) => p.id === created.id);
+    assert.equal(item.area, 24);
+    const verify = await call('PATCH', `/api/admin/studio/projects/${created.id}`, { ...staffSession, body: { measurementStatus: 'verified' } });
+    assert.equal(verify.status, 200);
+    assert.equal((await call('DELETE', `/api/admin/studio/projects/${created.id}`, staffSession)).status, 403);
+    assert.equal((await call('GET', `/api/admin/studio/projects/${created.id}`)).status, 401, 'anonymous');
+    const ownerSession = await login(owner);
+    assert.equal((await call('DELETE', `/api/admin/studio/projects/${created.id}`, ownerSession)).status, 200);
+  });
+
+  test('usage events accept only known kinds; turning the Studio off hides it everywhere', async () => {
+    await json('POST', '/api/studio/events', { kind: 'quote', productId: 1 });
+    await json('POST', '/api/studio/events', { kind: 'drop table' });
+    const kinds = (await db.all('SELECT DISTINCT kind FROM studio_events')).map((r) => r.kind);
+    assert.ok(kinds.includes('quote'));
+    assert.ok(!kinds.includes('drop table'));
+    const { cookie, csrf } = await login(owner);
+    assert.equal((await call('PUT', '/api/admin/settings', { cookie, csrf, body: { studio_enabled: '0' } })).status, 200);
+    assert.equal((await call('GET', '/en/studio')).status, 404);
+    assert.doesNotMatch((await call('GET', '/en/')).text, /\/en\/studio/);
+    assert.equal((await json('POST', '/api/studio/projects', { consent: true })).status, 404);
+    await call('PUT', '/api/admin/settings', { cookie, csrf, body: { studio_enabled: '1' } });
+  });
+});
