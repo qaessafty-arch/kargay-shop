@@ -14,6 +14,8 @@ import { publicRouter, staticRouter } from './routes/public.js';
 /** Builds the Express app. Tests pass their own in-memory database. */
 export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
   const app = express();
+  // Behind Vercel/Netlify, trust the first proxy hop so rate limits key on the visitor's IP, not the proxy's.
+  if (process.env.VERCEL || process.env.NETLIFY === 'true') app.set('trust proxy', 1);
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', config.trustProxy);
 
