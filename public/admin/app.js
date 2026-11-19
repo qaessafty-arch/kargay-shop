@@ -126,6 +126,43 @@
     email.focus();
   }
 
+  // ---------- First-run setup ----------
+  function renderSetup() {
+    clear(app);
+    var errorBox = el('div');
+    var token = el('input', { type: 'password', id: 'setup-token', autocomplete: 'off', required: true, maxlength: 200 });
+    var email = el('input', { type: 'email', id: 'setup-email', autocomplete: 'username', required: true, maxlength: 190 });
+    var name = el('input', { id: 'setup-name', required: true, maxlength: 80 });
+    var password = el('input', { type: 'password', id: 'setup-password', autocomplete: 'new-password', required: true, minlength: 12, maxlength: 128 });
+    var submit = el('button', { class: 'primary', type: 'submit', text: 'Create owner account' });
+    app.appendChild(el('form', {
+      class: 'card login',
+      onsubmit: function (event) {
+        event.preventDefault();
+        submit.disabled = true;
+        api('POST', '/api/setup/owner', { token: token.value, email: email.value, displayName: name.value, password: password.value })
+          .then(function () {
+            token.value = '';
+            password.value = '';
+            renderLogin();
+            notice(app.firstChild, 'Owner account created. Sign in to continue.', 'ok');
+          })
+          .catch(function (error) { fail(errorBox, error); })
+          .then(function () { submit.disabled = false; });
+      },
+    },
+      el('h1', { text: 'Set up your shop' }),
+      el('p', { text: 'Create the owner account. You need the one-time setup code you were given.' }),
+      errorBox,
+      el('label', { for: 'setup-token', text: 'Setup code' }), token,
+      el('label', { for: 'setup-email', text: 'Your email' }), email,
+      el('label', { for: 'setup-name', text: 'Your name' }), name,
+      el('label', { for: 'setup-password', text: 'Password (12+ characters)' }), password,
+      el('div', { class: 'actions' }, submit)
+    ));
+    token.focus();
+  }
+
   function loadSettings() {
     return api('GET', '/api/admin/settings').then(function (settings) { state.settings = settings; });
   }
@@ -219,6 +256,7 @@
     var grid = el('div', { class: 'grid-stats' });
     main.appendChild(el('h1', { text: 'Dashboard' }));
     main.appendChild(grid);
+    if (state.user.role === 'owner') main.appendChild(importCard());
     api('GET', '/api/admin/stats').then(function (s) {
       var cards = [
         ['Products', s.products], ['Visible on site', s.visible], ['Featured', s.featured],
@@ -230,6 +268,42 @@
         grid.appendChild(el('div', { class: 'card stat' }, el('b', { text: String(card[1]) }), el('span', { text: card[0] })));
       });
     }).catch(function (error) { fail(main, error); });
+  }
+
+  /** Owner-only card that imports the original page's products in batches, with progress. */
+  function importCard() {
+    var card = el('section', { class: 'card' });
+    var status = el('p', { text: 'Checking the original products…' });
+    card.appendChild(el('h2', { text: 'Original products' }));
+    card.appendChild(status);
+    api('GET', '/api/admin/import-legacy').then(function (info) {
+      if (!info.remaining) {
+        status.textContent = 'All ' + info.total + ' original products are in the shop.';
+        return;
+      }
+      status.textContent = info.remaining + ' of ' + info.total + ' original products (with photos) are not imported yet.';
+      var button = el('button', { class: 'primary', type: 'button', text: 'Import original products' });
+      button.addEventListener('click', function () {
+        button.disabled = true;
+        var failures = [];
+        (function step() {
+          api('POST', '/api/admin/import-legacy').then(function (result) {
+            failures = failures.concat(result.failed || []);
+            status.textContent = 'Importing… ' + result.remaining + ' left.';
+            if (result.remaining > 0 && result.imported > 0) return step();
+            status.textContent = failures.length
+              ? 'Import finished with ' + failures.length + ' problem(s): ' + failures.map(function (f) { return '#' + f.code + ' ' + f.reason; }).join('; ')
+              : 'Import finished.';
+            button.remove();
+          }).catch(function (error) {
+            fail(card, error);
+            button.disabled = false;
+          });
+        })();
+      });
+      card.appendChild(el('div', { class: 'actions' }, button));
+    }).catch(function (error) { fail(card, error); });
+    return card;
   }
 
   // ---------- Products ----------
@@ -757,5 +831,13 @@
       state.csrf = data.csrfToken;
       return loadSettings().then(renderShell);
     })
-    .catch(function () { renderLogin(); });
+    .catch(function () {
+      return api('GET', '/api/setup/status')
+        .then(function (status) {
+          if (status.needsOwner && status.setupEnabled) return renderSetup();
+          if (status.needsOwner) return renderLogin('This shop has no account yet. Setup is not enabled on the server.');
+          renderLogin();
+        })
+        .catch(function () { renderLogin(); });
+    });
 })();

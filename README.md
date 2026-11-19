@@ -51,6 +51,17 @@ npm test                     # runs the automated tests
 **Backups:** copy the whole `DATA_DIR` folder regularly. With the server stopped, or using SQLite's
 `.backup` command, copy `shop.db` safely; copy `uploads/` as-is.
 
+## First run in the browser
+
+You don't need a computer to set up a fresh deployment:
+
+1. Set a `SETUP_TOKEN` environment variable on the host (any long random string). It is a one-time code.
+2. Open `/admin`. While the shop has no account, it shows **Set up your shop**: enter the setup code, your email,
+   name and a password (12+ characters). After that first owner exists, setup is permanently closed.
+3. On the dashboard, the owner sees **Import original products**. It loads the 37 original products and their
+   photos in small batches, so each request stays within the host's time limit.
+4. You can delete `SETUP_TOKEN` afterwards.
+
 ## Deploy on Netlify
 
 The repo also works on Netlify. `netlify.toml` serves `public/` as static files and sends every other

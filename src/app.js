@@ -8,6 +8,7 @@ import { getDatabase } from './database.js';
 import { uploadsRoot } from './uploads.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
+import { setupRouter } from './routes/setup.js';
 import { publicRouter, staticRouter } from './routes/public.js';
 
 /** Builds the Express app. Tests pass their own in-memory database. */
@@ -49,6 +50,7 @@ export function createApp({ db = getDatabase(), loginLimit = 10 } = {}) {
   app.use(publicRouter({ db, enquiryLimiter }));
   app.use(staticRouter(uploadsRoot));
   app.use('/api/auth', authRouter({ db, loginLimiter }));
+  app.use('/api/setup', setupRouter({ db, limiter: loginLimiter }));
   app.use('/api/admin', adminRouter({ db, writeLimiter }));
 
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

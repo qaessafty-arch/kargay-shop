@@ -5,6 +5,7 @@ import { hashPassword, requireAuth, requireCsrf, requireRole } from '../auth.js'
 import { audit } from '../audit.js';
 import { findProduct, findProductByCode, getSettings, listProducts, renumberImages } from '../catalog.js';
 import { removeUpload, storeProductImage } from '../uploads.js';
+import { importLegacyBatch, loadManifest } from '../legacy-import.js';
 import {
   categorySchema,
   idParam,
@@ -480,6 +481,20 @@ export function adminRouter({ db, writeLimiter }) {
     await db.run('DELETE FROM sessions WHERE user_id = ?', [id.data]);
     await audit(db, { userId: req.auth.user.id, action: 'user.password_reset', entity: 'user', entityId: id.data });
     res.json({ ok: true });
+  });
+
+  // ---------- Original products import (owner) ----------
+  // Imports the products from the original page in small batches, so each request stays within serverless time limits.
+  router.get('/import-legacy', owner, async (req, res) => {
+    const total = loadManifest().products.length;
+    const codes = new Set((await db.all('SELECT code FROM products')).map((row) => row.code));
+    const remaining = loadManifest().products.filter((item) => !codes.has(item.number)).length;
+    res.json({ total, remaining });
+  });
+
+  router.post('/import-legacy', ...write, owner, async (req, res) => {
+    const result = await importLegacyBatch(db, { limit: 4, userId: req.auth.user.id });
+    res.json(result);
   });
 
   // ---------- Audit log (owner) ----------

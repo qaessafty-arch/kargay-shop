@@ -296,3 +296,56 @@ describe('product ordering', () => {
     assert.ok(row.sort > 2);
   });
 });
+
+describe('first-run setup', () => {
+  test('setup is off unless the server has a setup code', async () => {
+    delete process.env.SETUP_TOKEN;
+    const status = await call('GET', '/api/setup/status');
+    assert.equal(status.json.setupEnabled, false);
+    const res = await call('POST', '/api/setup/owner', { body: { token: 'x', email: 'new@test.local', displayName: 'New', password: PASSWORD } });
+    assert.equal(res.status, 404);
+  });
+
+  test('a wrong setup code is refused', async () => {
+    process.env.SETUP_TOKEN = 'correct-setup-code-1234567890';
+    const res = await call('POST', '/api/setup/owner', { body: { token: 'wrong-code', email: 'new@test.local', displayName: 'New', password: PASSWORD } });
+    assert.equal(res.status, 403);
+    delete process.env.SETUP_TOKEN;
+  });
+
+  test('setup cannot create a second owner once the shop has an account', async () => {
+    process.env.SETUP_TOKEN = 'correct-setup-code-1234567890';
+    const status = await call('GET', '/api/setup/status');
+    assert.equal(status.json.needsOwner, false);
+    const res = await call('POST', '/api/setup/owner', {
+      body: { token: 'correct-setup-code-1234567890', email: 'intruder@test.local', displayName: 'Intruder', password: PASSWORD },
+    });
+    assert.equal(res.status, 409);
+    assert.equal(await db.get('SELECT id FROM users WHERE email = ?', ['intruder@test.local']), undefined);
+    delete process.env.SETUP_TOKEN;
+  });
+});
+
+describe('original products import', () => {
+  test('staff cannot run the import', async () => {
+    const session = await login(staff);
+    const res = await call('POST', '/api/admin/import-legacy', { cookie: session.cookie, csrf: session.csrf });
+    assert.equal(res.status, 403);
+  });
+
+  test('the owner imports a batch with photos, and repeating it does not duplicate products', async () => {
+    const session = await login(owner);
+    const before = await call('GET', '/api/admin/import-legacy', { cookie: session.cookie });
+    assert.equal(before.json.total, 37);
+    const first = await call('POST', '/api/admin/import-legacy', { cookie: session.cookie, csrf: session.csrf });
+    assert.equal(first.status, 200, first.text);
+    assert.ok(first.json.imported > 0);
+    assert.equal(first.json.failed.length, 0);
+    const after = await call('GET', '/api/admin/import-legacy', { cookie: session.cookie });
+    assert.equal(after.json.remaining, before.json.remaining - first.json.imported);
+    const photos = await db.get('SELECT COUNT(*) AS n FROM product_images');
+    assert.ok(photos.n >= first.json.imported);
+    const dupes = await db.get('SELECT COUNT(*) AS n FROM (SELECT code FROM products GROUP BY code HAVING COUNT(*) > 1) d');
+    assert.equal(dupes.n, 0);
+  });
+});
