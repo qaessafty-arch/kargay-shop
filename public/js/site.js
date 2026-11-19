@@ -65,6 +65,14 @@
     if (location.hash === '#menu') openMenu();
   }
 
+  // A page restored with the Back button keeps its old state; never leave it unable to scroll.
+  window.addEventListener('pageshow', function (event) {
+    if (!event.persisted) return;
+    if (menu && menu.classList.contains('is-open') && location.hash !== '#menu') closeMenu(null, true);
+    var viewerOpen = document.querySelector('.viewer:not([hidden])');
+    if (!viewerOpen && !(menu && menu.classList.contains('is-open'))) document.body.classList.remove('no-scroll');
+  });
+
   // ---------- Header turns solid after scrolling past the top of the hero ----------
   var header = document.querySelector('.site-header.is-overlay');
   if (header) {

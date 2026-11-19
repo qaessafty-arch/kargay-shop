@@ -150,3 +150,19 @@ td.nowrap { white-space: nowrap; }
 .view-site { margin-inline-start: auto; align-self: center; }
 [dir='rtl'] .pager { justify-content: flex-start; }
 [dir='rtl'] input[type='email'], [dir='rtl'] input[type='password'], [dir='rtl'] input[type='number'] { direction: ltr; text-align: end; }
+
+/* Phones: one compact top bar, and the section tabs in a single row that scrolls sideways. */
+@media (max-width: 720px) {
+  .topbar { padding: 8px 12px; gap: 6px 10px; }
+  .topbar .brand { font-size: 15px; }
+  .topbar .who { font-size: 13px; }
+  .topbar .lang-switch button.small { padding: 3px 8px; font-size: 12px; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; padding: 0 8px; gap: 0; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button, .tabs .view-site { flex: none; white-space: nowrap; }
+  .tabs .view-site { margin-inline-start: 8px; }
+  .search > input, .search > select { flex: 1 1 100%; max-width: none; }
+  .actions > button, .actions > .button { flex: 1 1 auto; }
+  .card { padding: 12px; }
+  h1 { font-size: 22px; }
+}

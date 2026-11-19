@@ -917,6 +917,15 @@ function setView(view) {
   ui.viewBar.querySelectorAll('[data-view]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.view === view ? 'true' : 'false'));
   const box = ui.canvasBox;
   box.dataset.view = view;
+  ui.stage.classList.toggle('is-3d', view === '3d');
+  const pressed = ui.viewBar.querySelector('[aria-pressed="true"]');
+  if (pressed) {
+    // Scroll only the button bar sideways, never the page.
+    const bar = ui.viewBar.getBoundingClientRect();
+    const btn = pressed.getBoundingClientRect();
+    if (btn.left < bar.left) ui.viewBar.scrollLeft -= bar.left - btn.left + 8;
+    else if (btn.right > bar.right) ui.viewBar.scrollLeft += btn.right - bar.right + 8;
+  }
   ui.gl.hidden = !['design', 'compare', 'side'].includes(view);
   ui.original.hidden = view === 'design';
   ui.handle.hidden = view !== 'compare';

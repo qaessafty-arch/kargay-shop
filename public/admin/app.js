@@ -267,6 +267,14 @@
         b.setAttribute('aria-current', b.textContent === t(labelFor(view)) ? 'page' : 'false');
         if (b.getAttribute('aria-current') === 'false') b.removeAttribute('aria-current');
       });
+      var active = nav.querySelector('[aria-current="page"]');
+      if (active) {
+        // Scroll only the tab row sideways (phones), never the page.
+        var bar = nav.getBoundingClientRect();
+        var tab = active.getBoundingClientRect();
+        if (tab.left < bar.left) nav.scrollLeft -= bar.left - tab.left + 8;
+        else if (tab.right > bar.right) nav.scrollLeft += tab.right - bar.right + 8;
+      }
     }
     var renderers = {
       dashboard: renderDashboard,

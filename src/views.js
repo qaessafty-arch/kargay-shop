@@ -253,7 +253,7 @@ ${body}
 </main>
 ${siteFooter(ctx)}
 ${floatingWa ? `<a class="wa-float" href="${e(waLink(ctx, ctx.tr('wa.general', { name: ctx.shopName })))}" target="_blank" rel="noopener" aria-label="${e(ctx.tr('cta.floating'))}">${icon('wa')}</a>` : ''}
-<script src="/js/site.js?v=4" defer></script>${scripts}
+<script src="/js/site.js?v=5" defer></script>${scripts}
 <script src="/js/viewer.js?v=3" defer></script>
 </body>
 </html>`;
@@ -630,9 +630,9 @@ export function studioPage(ctx, { products, categories, popularity, preselect, s
       title: `${ctx.tr('st.title')} · ${ctx.tr('st.cta')}`,
       description: `${ctx.tr('st.subtitle')} ${ctx.tr('st.ctaText')}`,
       image: ctx.hero,
-      extraCss: '/css/studio.css?v=1',
+      extraCss: '/css/studio.css?v=2',
     },
-    scripts: '\n<script type="module" src="/js/studio.js?v=1"></script>',
+    scripts: '\n<script type="module" src="/js/studio.js?v=2"></script>',
     body,
   });
 }
