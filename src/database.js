@@ -130,12 +130,25 @@ export class Database {
   }
 
   async migrate() {
-    for (const statement of SCHEMA) {
-      await this.driver.query(statement);
-    }
-    const now = Date.now();
-    for (const [key, value] of Object.entries(config.shopDefaults)) {
-      await this.driver.query('INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING', [key, value, now]);
+    // Several serverless instances can start at once. CREATE TABLE IF NOT EXISTS is not safe to run
+    // concurrently in Postgres, so one transaction-scoped advisory lock lets only one instance run it at a time.
+    const client = this.driver.connect ? await this.driver.connect() : this.driver;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(724519)');
+      for (const statement of SCHEMA) {
+        await client.query(statement);
+      }
+      const now = Date.now();
+      for (const [key, value] of Object.entries(config.shopDefaults)) {
+        await client.query('INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, $3) ON CONFLICT (key) DO NOTHING', [key, value, now]);
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      if (client !== this.driver) client.release();
     }
   }
 

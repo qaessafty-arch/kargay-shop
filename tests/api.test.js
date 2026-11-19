@@ -361,3 +361,11 @@ describe('page sources', () => {
     assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
   });
 });
+
+describe('database setup', () => {
+  test('schema setup can run again safely on an existing database', async () => {
+    await db.migrate();
+    await db.migrate();
+    assert.ok((await db.get('SELECT COUNT(*) AS n FROM settings')).n >= 8);
+  });
+});
