@@ -426,6 +426,18 @@ describe('shop features', () => {
     assert.equal(await stock(), 10, 'cancelling twice does not add stock twice');
   });
 
+  test('an order line pointing at an unknown product is kept, but not linked', async () => {
+    const { cookie, csrf } = await login(staff);
+    const order = await call('POST', '/api/admin/orders', {
+      cookie, csrf,
+      body: { customerName: 'Unknown Link', phone: '0750 222 3344', items: [{ productId: 999999, productName: 'Something', qty: 1, unitPrice: 500 }] },
+    });
+    assert.equal(order.status, 201, order.text);
+    const detail = await call('GET', `/api/admin/orders/${order.json.id}`, { cookie });
+    assert.equal(detail.json.items[0].product_id, null);
+    assert.equal((await call('PATCH', `/api/admin/orders/${order.json.id}/status`, { cookie, csrf, body: { status: 'confirmed' } })).status, 200);
+  });
+
   test('orders can be found by name, phone digits or number', async () => {
     const { cookie } = await login(staff);
     const byPhone = await call('GET', '/api/admin/orders?q=7501112233', { cookie });

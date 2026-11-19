@@ -599,8 +599,14 @@ export function adminRouter({ db, writeLimiter }) {
     const now = Date.now();
     const id = await db.transaction(async (tx) => {
       // Each line keeps the name and price entered at the time of sale, so later product edits do not change old orders.
+      // A line is linked to a product only if that product exists, so stock changes never point at nothing.
+      const ids = [...new Set(d.items.map((item) => item.productId).filter(Boolean))];
+      const known = new Set();
+      for (const pid of ids) {
+        if (await tx.get('SELECT id FROM products WHERE id = ? AND deleted_at IS NULL', [pid])) known.add(pid);
+      }
       const lines = d.items.map((item) => ({
-        productId: item.productId ?? null,
+        productId: item.productId && known.has(item.productId) ? item.productId : null,
         productName: item.productName,
         qty: item.qty,
         unitPrice: item.unitPrice,

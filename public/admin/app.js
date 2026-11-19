@@ -909,16 +909,47 @@
     var address = el('input', { maxlength: 300 });
     var note = el('textarea', { maxlength: 500 });
     var rows = el('div');
+    var catalogue = [];
+
+    // Linking a line to a catalogue product lets confirming or cancelling the order change that product's stock.
+    function productOptions(select) {
+      clear(select);
+      select.appendChild(el('option', { value: '', text: '— Not in the catalogue —' }));
+      catalogue.forEach(function (p) {
+        select.appendChild(el('option', { value: p.id }, '#' + p.code + ' ' + p.name + (p.widthCm && p.heightCm ? ' (' + p.widthCm + '×' + p.heightCm + ')' : '')));
+      });
+    }
 
     function addRow() {
+      var product = el('select', { 'aria-label': 'Product' });
+      productOptions(product);
       var nameInput = el('input', { placeholder: 'Product or description', maxlength: 120, 'aria-label': 'Item name' });
       var price = el('input', { type: 'number', min: 0, placeholder: 'Unit price', 'aria-label': 'Unit price' });
       var qty = el('input', { type: 'number', min: 1, value: 1, 'aria-label': 'Quantity' });
-      var line = el('div', { class: 'row', style: 'align-items:end' }, labelled('Item', nameInput), labelled('Unit price', price), labelled('Qty', qty),
+      product.addEventListener('change', function () {
+        var p = catalogue.filter(function (c) { return String(c.id) === product.value; })[0];
+        if (!p) return;
+        nameInput.value = '#' + p.code + ' ' + p.name;
+        if (p.price !== null && p.price !== undefined) price.value = p.price;
+      });
+      var line = el('div', { class: 'row', style: 'align-items:end' }, labelled('Product', product), labelled('Item', nameInput), labelled('Unit price', price), labelled('Qty', qty),
         el('button', { type: 'button', class: 'danger small', text: 'Remove', onclick: function () { rows.removeChild(line); } }));
-      line.itemInputs = { name: nameInput, price: price, qty: qty };
+      line.itemInputs = { product: product, name: nameInput, price: price, qty: qty };
       rows.appendChild(line);
     }
+
+    (function loadCatalogue(page) {
+      api('GET', '/api/admin/products?status=all&page=' + page).then(function (data) {
+        catalogue = catalogue.concat(data.items.filter(function (p) { return !p.deleted; }));
+        if (data.page < data.pages && page < 50) return loadCatalogue(page + 1);
+        catalogue.sort(function (x, y) { return x.code - y.code; });
+        Array.prototype.forEach.call(rows.childNodes, function (line) {
+          var keep = line.itemInputs.product.value;
+          productOptions(line.itemInputs.product);
+          line.itemInputs.product.value = keep;
+        });
+      }).catch(function (error) { fail(notes, error); });
+    })(1);
 
     main.appendChild(notes);
     main.appendChild(el('h1', { text: 'New order' }));
@@ -927,6 +958,7 @@
       event.preventDefault();
       var items = Array.prototype.map.call(rows.childNodes, function (line) {
         return {
+          productId: line.itemInputs.product.value ? Number(line.itemInputs.product.value) : null,
           productName: line.itemInputs.name.value.trim(),
           unitPrice: Number(line.itemInputs.price.value),
           qty: Number(line.itemInputs.qty.value),
