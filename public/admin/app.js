@@ -709,13 +709,14 @@
    */
   function texturePanel(product, notes, fields) {
     var panel = el('section', { class: 'card' });
-    var preview = el('img', { class: 'site-image logo', alt: 'Texture' });
+    var preview = el('img', { class: 'site-image logo', alt: 'Texture', style: 'display:none' });
     var status = el('p', { class: 'muted' });
     var fileInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Choose texture' });
     var cropBox = el('div');
 
     function show(p) {
-      preview.hidden = !p.textureUrl;
+      // style.display, not the hidden attribute: the .site-image rule sets display and would override it.
+      preview.style.display = p.textureUrl ? '' : 'none';
       if (p.textureUrl) preview.src = p.textureThumb || p.textureUrl;
       status.textContent = t(p.textureUrl
         ? (p.vizEnabled ? 'Texture ready. Customers can preview this tile.' : 'Texture ready. Tick "Customers can preview" above and save to show it in the Studio.')
