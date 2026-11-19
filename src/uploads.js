@@ -4,6 +4,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import { del, put } from '@vercel/blob';
 import { config } from './config.js';
+import { PHOTO_KEY, isNetlify, photoStore } from './netlify-store.js';
 
 const ALLOWED_FORMATS = new Set(['jpeg', 'png', 'webp']);
 const MAIN_MAX_SIDE = 1600;
@@ -56,8 +57,16 @@ export async function storeProductImage(buffer, productCode) {
     return { file: mainBlob.url, thumb: thumbBlob.url };
   }
 
+  if (isNetlify()) {
+    const toBytes = (buf) => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    const store = photoStore();
+    await store.set(`products/${productCode}/${mainName}`, toBytes(main), { metadata: { contentType: 'image/webp' } });
+    await store.set(`products/${productCode}/${thumbName}`, toBytes(thumb), { metadata: { contentType: 'image/webp' } });
+    return { file: `/media/products/${productCode}/${mainName}`, thumb: `/media/products/${productCode}/${thumbName}` };
+  }
+
   if (config.isProduction) {
-    throw new Error('Photo storage is not configured. Add the Vercel Blob store to the project.');
+    throw new Error('Photo storage is not configured. Add the Vercel Blob or Netlify Blobs store to the project.');
   }
 
   const dir = path.join(uploadsRoot, 'products', String(productCode));
@@ -73,6 +82,11 @@ export async function removeUpload(url) {
   if (!url) return;
   if (url.startsWith('https://') && config.blobToken) {
     await del(url, { token: config.blobToken }).catch(() => {});
+    return;
+  }
+  if (url.startsWith('/media/') && isNetlify()) {
+    const key = url.slice('/media/'.length);
+    if (PHOTO_KEY.test(key)) await photoStore().delete(key).catch(() => {});
     return;
   }
   if (!url.startsWith('/uploads/')) return;

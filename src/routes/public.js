@@ -3,6 +3,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { renderHomePage } from '../render.js';
 import { getSettings, visibleProducts } from '../catalog.js';
+import { PHOTO_KEY, isNetlify, photoStore } from '../netlify-store.js';
 
 export function publicRouter({ db, enquiryLimiter }) {
   const router = Router();
@@ -39,6 +40,21 @@ export function publicRouter({ db, enquiryLimiter }) {
   // Placeholder for <img> fallbacks in the template.
   router.get('/img/blank.gif', (req, res) => {
     res.type('gif').send(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'));
+  });
+
+  // Photos stored in Netlify Blobs are served from the site itself, so the page's image rules stay strict.
+  router.get(/^\/media\/(.+)$/, async (req, res, next) => {
+    try {
+      const key = req.params[0];
+      if (!isNetlify() || !PHOTO_KEY.test(key)) return res.status(404).end();
+      const bytes = await photoStore().get(key, { type: 'arrayBuffer' });
+      if (!bytes) return res.status(404).end();
+      res.set('Content-Type', 'image/webp');
+      res.set('Cache-Control', 'public, max-age=2592000, immutable');
+      res.send(Buffer.from(bytes));
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.get('/admin', (req, res) => {

@@ -51,6 +51,25 @@ npm test                     # runs the automated tests
 **Backups:** copy the whole `DATA_DIR` folder regularly. With the server stopped, or using SQLite's
 `.backup` command, copy `shop.db` safely; copy `uploads/` as-is.
 
+## Deploy on Netlify
+
+The repo also works on Netlify. `netlify.toml` serves `public/` as static files and sends every other
+request to one function (`netlify/functions/server.mjs`) that runs the same Express app.
+
+1. In Netlify, choose **Add new site → Import an existing project** and pick this GitHub repo.
+   The build settings come from `netlify.toml`.
+2. Create a free **Neon** Postgres database (neon.tech) and add its connection string as the
+   `DATABASE_URL` environment variable in **Site configuration → Environment variables**.
+   Also set `NODE_ENV=production`.
+3. Deploy. Photos are stored in **Netlify Blobs** automatically (no setup needed) and served from `/media/...`.
+4. Run the one-time setup from your computer with the same `DATABASE_URL`:
+   `npm run create-admin` (see above). To import the original products with photos on Netlify, run the import
+   inside the site with `netlify dev` or upload the photos from the admin, because Netlify Blobs only
+   accepts writes from the site itself.
+
+Rate limits are kept in memory per function instance, so they are weaker on serverless hosts.
+Netlify's own rate limiting rules can add a stronger limit on `/api/auth/login`.
+
 ## Security model
 
 - Passwords: bcrypt (cost 12), minimum 12 characters. There is no default password anywhere in the code.
