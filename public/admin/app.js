@@ -177,6 +177,7 @@
     { id: 'products', label: 'Products' },
     { id: 'orders', label: 'Orders' },
     { id: 'categories', label: 'Categories' },
+    { id: 'gallery', label: 'Gallery' },
     { id: 'settings', label: 'Settings', owner: true },
     { id: 'users', label: 'Users', owner: true },
     { id: 'audit', label: 'Audit log', owner: true },
@@ -227,6 +228,7 @@
       order: renderOrderDetail,
       'new-order': renderOrderForm,
       categories: renderCategories,
+      gallery: renderGallery,
       settings: renderSettings,
       users: renderUsers,
       audit: renderAudit,
@@ -291,23 +293,44 @@
   function renderDashboard() {
     var main = state.main;
     var grid = el('div', { class: 'grid-stats' });
+    var lower = el('div', { class: 'dash-columns' });
     main.appendChild(el('h1', { text: 'Dashboard' }));
     main.appendChild(grid);
+    main.appendChild(lower);
     if (state.user.role === 'owner') main.appendChild(importCard());
     api('GET', '/api/admin/stats').then(function (s) {
       var cards = [
-        ['Products', s.products], ['Visible on site', s.visible], ['Featured', s.featured],
-        ['Low stock (≤ 3)', s.lowStock], ['Pending orders', s.pendingOrders],
-        ['Delivered this month', s.deliveredThisMonth], ['Revenue this month', money(s.revenueThisMonth)],
-        ['WhatsApp enquiries', s.enquiriesTotal],
+        ['Products', s.products], ['Available', s.available], ['Out of stock', s.outOfStock], ['Categories', s.categories],
+        ['Visible on site', s.visible], ['Low stock (1–3)', s.lowStock], ['Pending orders', s.pendingOrders],
+        ['Revenue this month', money(s.revenueThisMonth)], ['WhatsApp enquiries', s.enquiriesTotal],
       ];
       cards.forEach(function (card) {
         grid.appendChild(el('div', { class: 'card stat' }, el('b', { text: String(card[1]) }), el('span', { text: card[0] })));
       });
+
+      var recent = el('section', { class: 'card' }, el('h2', { text: 'Recently added products' }));
+      if (!s.recentProducts.length) recent.appendChild(el('p', { text: 'No products yet.' }));
+      s.recentProducts.forEach(function (p) {
+        recent.appendChild(el('button', { type: 'button', class: 'list-row', onclick: function () { go('product', p.id); } },
+          p.mainImage ? el('img', { class: 'thumb', src: p.mainImage, alt: '' }) : el('span', { class: 'thumb' }),
+          el('span', { class: 'list-main' }, el('strong', { text: '#' + p.code + ' ' + p.name }), el('small', { text: when(p.updatedAt) })),
+          pill(p.visible ? 'visible' : 'hidden', p.visible ? 'on' : 'off')));
+      });
+      lower.appendChild(recent);
+
+      if (state.user.role === 'owner') {
+        var activity = el('section', { class: 'card' }, el('h2', { text: 'Recent activity' }));
+        if (!s.activity.length) activity.appendChild(el('p', { text: 'Nothing yet.' }));
+        s.activity.forEach(function (a) {
+          activity.appendChild(el('div', { class: 'list-row static' },
+            el('span', { class: 'list-main' }, el('strong', { text: a.action + (a.entityId ? ' #' + a.entityId : '') }), el('small', { text: (a.user || 'system') + ' · ' + when(a.at) }))));
+        });
+        activity.appendChild(el('button', { type: 'button', class: 'small', text: 'Full audit log', onclick: function () { go('audit'); } }));
+        lower.appendChild(activity);
+      }
     }).catch(function (error) { fail(main, error); });
   }
 
-  /** Owner-only card that imports the original page's products in batches, with progress. */
   function importCard() {
     var card = el('section', { class: 'card' });
     var status = el('p', { text: 'Checking the original products…' });
@@ -436,8 +459,12 @@
 
     var fields = {
       code: el('input', { id: 'code', type: 'number', min: 1, max: 999999, placeholder: 'Auto' }),
-      name: el('input', { id: 'name', maxlength: 120, required: true }),
-      description: el('textarea', { id: 'description', maxlength: 1000 }),
+      name: el('input', { id: 'name', maxlength: 120, required: true, dir: 'rtl', lang: 'ku' }),
+      nameAr: el('input', { id: 'nameAr', maxlength: 120, dir: 'rtl', lang: 'ar' }),
+      nameEn: el('input', { id: 'nameEn', maxlength: 120, dir: 'ltr', lang: 'en' }),
+      description: el('textarea', { id: 'description', maxlength: 1000, dir: 'rtl', lang: 'ku' }),
+      descriptionAr: el('textarea', { id: 'descriptionAr', maxlength: 1000, dir: 'rtl', lang: 'ar' }),
+      descriptionEn: el('textarea', { id: 'descriptionEn', maxlength: 1000, dir: 'ltr', lang: 'en' }),
       widthCm: el('input', { id: 'widthCm', type: 'number', min: 1, max: 500 }),
       heightCm: el('input', { id: 'heightCm', type: 'number', min: 1, max: 500 }),
       price: el('input', { id: 'price', type: 'number', min: 0, placeholder: 'Ask on WhatsApp' }),
@@ -454,7 +481,11 @@
       var payload = {
         code: fields.code.value === '' ? undefined : Number(fields.code.value),
         name: fields.name.value.trim(),
+        nameAr: fields.nameAr.value.trim(),
+        nameEn: fields.nameEn.value.trim(),
         description: fields.description.value,
+        descriptionAr: fields.descriptionAr.value,
+        descriptionEn: fields.descriptionEn.value,
         categoryId: category.value === '' ? null : Number(category.value),
         widthCm: numberOrNull(fields.widthCm.value),
         heightCm: numberOrNull(fields.heightCm.value),
@@ -476,25 +507,45 @@
     };
 
     form.appendChild(el('div', { class: 'row' },
-      labelled('Code', fields.code), labelled('Name', fields.name), labelled('Category', category)));
-    form.appendChild(labelled('Description (shown as the photo alt text)', fields.description));
+      labelled('Product number', fields.code), labelled('Category', category)));
+    form.appendChild(el('h2', { class: 'form-section', text: 'Name and description' }));
+    form.appendChild(el('p', { class: 'muted', text: 'Kurdish is required. Arabic and English are shown to visitors who choose those languages; if left empty, the Kurdish text is shown.' }));
+    form.appendChild(el('div', { class: 'row three' },
+      labelled('Name — Kurdish', fields.name), labelled('Name — Arabic', fields.nameAr), labelled('Name — English', fields.nameEn)));
+    form.appendChild(el('div', { class: 'row three' },
+      labelled('Description — Kurdish', fields.description), labelled('Description — Arabic', fields.descriptionAr),
+      labelled('Description — English', fields.descriptionEn)));
+    form.appendChild(el('h2', { class: 'form-section', text: 'Size, price and stock' }));
     form.appendChild(el('div', { class: 'row' },
       labelled('Width (cm)', fields.widthCm), labelled('Height (cm)', fields.heightCm),
       labelled('Price (' + ((state.settings && state.settings.currency) || 'IQD') + ')', fields.price),
       labelled('Stock', fields.stock), labelled('Display order', fields.sort)));
+    form.appendChild(el('p', { class: 'muted', text: 'Shown to visitors as: Out of stock when stock is 0; Contact for price when there is no price; otherwise Available. Leave stock empty if you do not track it.' }));
     form.appendChild(el('div', { class: 'row' },
       el('label', { class: 'check' }, fields.visible, 'Visible on the site'),
-      el('label', { class: 'check' }, fields.featured, 'Featured')));
+      el('label', { class: 'check' }, fields.featured, 'Featured (shown first)')));
     var saveButton = el('button', { class: 'primary', type: 'submit', text: 'Save product' });
-    form.appendChild(el('div', { class: 'actions' }, saveButton,
+    var previewLink = el('a', { class: 'button', target: '_blank', rel: 'noopener', text: 'Preview on site', hidden: true });
+    form.appendChild(el('div', { class: 'actions' }, saveButton, previewLink,
       el('button', { type: 'button', text: 'Back to products', onclick: function () { go('products'); } })));
     main.appendChild(form);
 
-    if (isNew) return;
+    if (isNew) {
+      api('GET', '/api/admin/products/next-code').then(function (r) { fields.code.placeholder = 'Next free: ' + r.code; }).catch(function () {});
+      return;
+    }
     api('GET', '/api/admin/products/' + id).then(function (p) {
       fields.code.value = p.code;
       fields.name.value = p.name;
+      fields.nameAr.value = p.nameAr || '';
+      fields.nameEn.value = p.nameEn || '';
       fields.description.value = p.description;
+      fields.descriptionAr.value = p.descriptionAr || '';
+      fields.descriptionEn.value = p.descriptionEn || '';
+      // Hidden products open with ?preview, which works only for signed-in shop users.
+      previewLink.href = '/products/' + p.code + (p.visible ? '' : '?preview');
+      previewLink.textContent = p.visible ? 'View on site' : 'Preview (hidden from visitors)';
+      previewLink.hidden = false;
       fields.widthCm.value = p.widthCm ?? '';
       fields.heightCm.value = p.heightCm ?? '';
       fields.price.value = p.price ?? '';
@@ -575,7 +626,7 @@
     });
 
     panel.appendChild(el('h2', { text: 'Photos' }));
-    panel.appendChild(el('p', { text: 'The first photo is the main one. The second is shown in the lightbox. JPEG, PNG or WebP, up to 6 MB each.' }));
+    panel.appendChild(el('p', { text: 'The first photo is the main one, used on the product card. All photos are shown on the product page. JPEG, PNG or WebP, up to 6 MB each.' }));
     panel.appendChild(grid);
     panel.appendChild(el('div', { class: 'actions' }, fileInput, upload));
 
@@ -723,16 +774,20 @@
     var main = state.main;
     var notes = el('div');
     var list = el('div', { class: 'card table-wrap' });
-    var newName = el('input', { maxlength: 60, placeholder: 'New category name', 'aria-label': 'New category name' });
+    var newName = el('input', { maxlength: 60, required: true, dir: 'rtl', 'aria-label': 'Name in Kurdish' });
+    var newAr = el('input', { maxlength: 60, dir: 'rtl', 'aria-label': 'Name in Arabic' });
+    var newEn = el('input', { maxlength: 60, dir: 'ltr', 'aria-label': 'Name in English' });
     var newSort = el('input', { type: 'number', value: 0, 'aria-label': 'Display order' });
     main.appendChild(notes);
     main.appendChild(el('h1', { text: 'Categories' }));
+    main.appendChild(el('p', { class: 'muted', text: 'Categories become the filter buttons in the public showroom. Only categories that have visible products are shown there.' }));
     main.appendChild(el('form', { class: 'card', onsubmit: function (event) {
       event.preventDefault();
-      api('POST', '/api/admin/categories', { name: newName.value.trim(), sort: Number(newSort.value || 0) })
-        .then(function () { newName.value = ''; notice(notes, 'Category added.', 'ok'); refresh(); })
+      api('POST', '/api/admin/categories', { name: newName.value.trim(), nameAr: newAr.value.trim(), nameEn: newEn.value.trim(), sort: Number(newSort.value || 0) })
+        .then(function () { newName.value = ''; newAr.value = ''; newEn.value = ''; notice(notes, 'Category added.', 'ok'); refresh(); })
         .catch(function (error) { fail(notes, error); });
-    } }, el('div', { class: 'row' }, labelled('Name', newName), labelled('Display order', newSort)),
+    } }, el('h2', { text: 'New category' }),
+      el('div', { class: 'row' }, labelled('Name — Kurdish', newName), labelled('Name — Arabic', newAr), labelled('Name — English', newEn), labelled('Display order', newSort)),
       el('div', { class: 'actions' }, el('button', { class: 'primary', type: 'submit', text: 'Add category' }))));
     main.appendChild(list);
 
@@ -741,19 +796,22 @@
         clear(list);
         if (!state.categories.length) list.appendChild(el('p', { text: 'No categories yet.' }));
         if (state.categories.length) list.appendChild(el('table', null,
-          el('thead', null, el('tr', null, ['Name', 'Order', ''].map(function (h) { return el('th', null, h); }))),
+          el('thead', null, el('tr', null, ['Kurdish', 'Arabic', 'English', 'Order', 'Products', ''].map(function (h) { return el('th', null, h); }))),
           el('tbody', null, state.categories.map(function (c) {
-            var name = el('input', { value: c.name, maxlength: 60, 'aria-label': 'Category name' });
+            var name = el('input', { value: c.name, maxlength: 60, dir: 'rtl', 'aria-label': 'Name in Kurdish' });
+            var ar = el('input', { value: c.nameAr || '', maxlength: 60, dir: 'rtl', 'aria-label': 'Name in Arabic' });
+            var en = el('input', { value: c.nameEn || '', maxlength: 60, dir: 'ltr', 'aria-label': 'Name in English' });
             var sort = el('input', { type: 'number', value: c.sort, 'aria-label': 'Display order' });
             return el('tr', null,
-              el('td', null, name), el('td', { style: 'width:110px' }, sort),
-              el('td', null,
+              el('td', null, name), el('td', null, ar), el('td', null, en), el('td', { class: 'narrow' }, sort),
+              el('td', { class: 'num' }, String(c.products || 0)),
+              el('td', { class: 'nowrap' },
                 el('button', { class: 'small', type: 'button', text: 'Save', onclick: function () {
-                  api('PATCH', '/api/admin/categories/' + c.id, { name: name.value.trim(), sort: Number(sort.value || 0) })
+                  api('PATCH', '/api/admin/categories/' + c.id, { name: name.value.trim(), nameAr: ar.value.trim(), nameEn: en.value.trim(), sort: Number(sort.value || 0) })
                     .then(function () { notice(notes, 'Saved.', 'ok'); refresh(); }).catch(function (error) { fail(notes, error); });
                 } }), ' ',
                 state.user.role === 'owner' ? el('button', { class: 'small danger', type: 'button', text: 'Delete', onclick: function () {
-                  if (!window.confirm('Delete this category? Products stay, but lose the category.')) return;
+                  if (!window.confirm('Delete this category? Its products stay, but lose the category.')) return;
                   api('DELETE', '/api/admin/categories/' + c.id).then(function () { refresh(); }).catch(function (error) { fail(notes, error); });
                 } }) : null));
           }))));
@@ -762,34 +820,160 @@
     refresh();
   }
 
+  // ---------- Gallery ----------
+  function renderGallery() {
+    var main = state.main;
+    var notes = el('div');
+    var grid = el('div', { class: 'gallery-admin' });
+    var fileInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', multiple: true, 'aria-label': 'Choose photos' });
+    var items = [];
+
+    function paint(list) {
+      items = list;
+      clear(grid);
+      if (!list.length) grid.appendChild(el('p', { text: 'No workshop photos yet. Photos you upload here appear in the Gallery page and the About section.' }));
+      list.forEach(function (g, index) {
+        var cap = el('input', { value: g.caption || '', maxlength: 200, dir: 'rtl', placeholder: 'Kurdish caption', 'aria-label': 'Caption in Kurdish' });
+        var capAr = el('input', { value: g.captionAr || '', maxlength: 200, dir: 'rtl', placeholder: 'Arabic caption', 'aria-label': 'Caption in Arabic' });
+        var capEn = el('input', { value: g.captionEn || '', maxlength: 200, dir: 'ltr', placeholder: 'English caption', 'aria-label': 'Caption in English' });
+        var featured = el('input', { type: 'checkbox', checked: g.featured });
+        grid.appendChild(el('figure', { class: 'image-tile' },
+          el('img', { src: g.thumb || g.file, alt: '', loading: 'lazy' }),
+          cap, capAr, capEn,
+          el('label', { class: 'check' }, featured, 'Featured (used in About)'),
+          el('div', { class: 'tools' },
+            el('button', { class: 'small', type: 'button', text: '←', 'aria-label': 'Move earlier', disabled: index === 0, onclick: function () { move(index, -1); } }),
+            el('button', { class: 'small', type: 'button', text: '→', 'aria-label': 'Move later', disabled: index === list.length - 1, onclick: function () { move(index, 1); } }),
+            el('button', { class: 'small primary', type: 'button', text: 'Save', onclick: function () {
+              api('PATCH', '/api/admin/gallery/' + g.id, { caption: cap.value.trim(), captionAr: capAr.value.trim(), captionEn: capEn.value.trim(), featured: featured.checked })
+                .then(function (r) { paint(r.items); notice(notes, 'Saved.', 'ok'); }).catch(function (error) { fail(notes, error); });
+            } }),
+            el('button', { class: 'small danger', type: 'button', text: 'Delete', onclick: function () {
+              if (!window.confirm('Delete this photo? This cannot be undone.')) return;
+              api('DELETE', '/api/admin/gallery/' + g.id).then(function (r) { paint(r.items); notice(notes, 'Photo deleted.', 'ok'); }).catch(function (error) { fail(notes, error); });
+            } }))));
+      });
+    }
+
+    function move(index, step) {
+      var ids = items.map(function (i) { return i.id; });
+      var moved = ids.splice(index, 1)[0];
+      ids.splice(index + step, 0, moved);
+      api('PUT', '/api/admin/gallery/order', { ids: ids }).then(function (r) { paint(r.items); }).catch(function (error) { fail(notes, error); });
+    }
+
+    var upload = el('button', { class: 'primary', type: 'button', text: 'Upload photos', onclick: function () {
+      if (!fileInput.files.length) return notice(notes, 'Choose one or more photos first.', 'error');
+      var data = new FormData();
+      Array.prototype.forEach.call(fileInput.files, function (f) { data.append('files', f); });
+      upload.disabled = true;
+      api('POST', '/api/admin/gallery', undefined, data)
+        .then(function (r) { fileInput.value = ''; paint(r.items); notice(notes, 'Photos uploaded.', 'ok'); })
+        .catch(function (error) { fail(notes, error); })
+        .then(function () { upload.disabled = false; });
+    } });
+
+    main.appendChild(notes);
+    main.appendChild(el('h1', { text: 'Gallery' }));
+    main.appendChild(el('p', { class: 'muted', text: 'Workshop and factory photos. Product photos are managed on each product. JPEG, PNG or WebP, up to 6 MB each.' }));
+    main.appendChild(el('div', { class: 'card' }, el('div', { class: 'actions' }, fileInput, upload)));
+    main.appendChild(el('div', { class: 'card' }, grid));
+    api('GET', '/api/admin/gallery').then(function (r) { paint(r.items); }).catch(function (error) { fail(notes, error); });
+  }
+
   // ---------- Settings (owner) ----------
   function renderSettings() {
     var main = state.main;
     var notes = el('div');
-    var fields = [
-      ['shop_name', 'Shop name'], ['phone_primary', 'Phone (primary)'], ['phone_secondary', 'Phone (secondary)'],
-      ['whatsapp_number', 'WhatsApp number (digits, with country code)'], ['tiktok_handle', 'TikTok handle'],
-      ['address', 'Address'], ['founded_year', 'Founded year'], ['currency', 'Currency code'],
+    var groups = [
+      ['Business', [
+        ['shop_name', 'Factory name — Kurdish', 'rtl'], ['shop_name_ar', 'Factory name — Arabic', 'rtl'], ['shop_name_en', 'Factory name — English', 'ltr'],
+        ['founded_year', 'Founded year', 'ltr'], ['currency', 'Currency code (e.g. IQD)', 'ltr'],
+        ['default_language', 'Default language', 'select'],
+      ]],
+      ['Contact', [
+        ['whatsapp_number', 'WhatsApp number (digits with country code, e.g. 9647504251661)', 'ltr'],
+        ['phone_primary', 'Phone (primary)', 'ltr'], ['phone_secondary', 'Phone (secondary)', 'ltr'],
+      ]],
+      ['Location', [
+        ['address', 'Address — Kurdish', 'rtl'], ['address_ar', 'Address — Arabic', 'rtl'], ['address_en', 'Address — English', 'ltr'],
+        ['map_url', 'Google Maps link (https://…)', 'ltr'],
+        ['map_lat', 'Latitude (optional, shows an embedded map)', 'ltr'], ['map_lng', 'Longitude (optional)', 'ltr'],
+      ]],
+      ['Social media (leave empty to hide)', [
+        ['facebook_url', 'Facebook page link (https://…)', 'ltr'], ['instagram_url', 'Instagram link (https://…)', 'ltr'],
+        ['tiktok_handle', 'TikTok handle (e.g. @kargay.barzan.shree)', 'ltr'],
+      ]],
+      ['Search engines and link previews', [
+        ['seo_title_ku', 'Page title — Kurdish', 'rtl'], ['seo_description_ku', 'Description — Kurdish', 'rtl', true],
+        ['seo_title_ar', 'Page title — Arabic', 'rtl'], ['seo_description_ar', 'Description — Arabic', 'rtl', true],
+        ['seo_title_en', 'Page title — English', 'ltr'], ['seo_description_en', 'Description — English', 'ltr', true],
+      ]],
     ];
     var inputs = {};
-    var form = el('form', { class: 'card', onsubmit: function (event) {
+    var form = el('form', { onsubmit: function (event) {
       event.preventDefault();
       var payload = {};
-      fields.forEach(function (f) { payload[f[0]] = inputs[f[0]].value.trim(); });
+      Object.keys(inputs).forEach(function (key) { payload[key] = inputs[key].value.trim(); });
       api('PUT', '/api/admin/settings', payload)
-        .then(function (s) { state.settings = s; notice(notes, 'Settings saved. The public site updates on the next visit.', 'ok'); })
+        .then(function (saved) { state.settings = saved; notice(notes, 'Settings saved. The public site updates on the next visit.', 'ok'); })
         .catch(function (error) { fail(notes, error); });
     } });
+    groups.forEach(function (group) {
+      var card = el('section', { class: 'card' }, el('h2', { text: group[0] }));
+      // Long text (titles with descriptions) gets two wide columns instead of many narrow ones.
+      var row = el('div', { class: group[1].some(function (f) { return f[3]; }) ? 'row two' : 'row' });
+      group[1].forEach(function (f) {
+        var control;
+        if (f[2] === 'select') {
+          control = el('select', { id: f[0] }, [['ku', 'Kurdish'], ['ar', 'Arabic'], ['en', 'English']].map(function (o) { return el('option', { value: o[0], text: o[1] }); }));
+        } else if (f[3]) {
+          control = el('textarea', { id: f[0], maxlength: 300, dir: f[2], rows: 3 });
+        } else {
+          control = el('input', { id: f[0], maxlength: 300, dir: f[2] });
+        }
+        inputs[f[0]] = control;
+        row.appendChild(labelled(f[1], control));
+      });
+      card.appendChild(row);
+      form.appendChild(card);
+    });
+    form.appendChild(el('div', { class: 'actions sticky-actions' }, el('button', { class: 'primary', type: 'submit', text: 'Save settings' })));
+
+    function imageCard(kind, title, help) {
+      var key = kind === 'logo' ? 'logo_url' : 'hero_url';
+      var preview = el('img', { class: 'site-image ' + kind, alt: '' });
+      var file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Choose ' + kind });
+      var reset = el('button', { class: 'small', type: 'button', text: 'Use the original', onclick: function () {
+        api('DELETE', '/api/admin/settings/images/' + kind).then(function (saved) { show(saved); notice(notes, 'Restored.', 'ok'); }).catch(function (error) { fail(notes, error); });
+      } });
+      function show(saved) {
+        preview.src = saved[key] || (kind === 'logo' ? '/assets/brand-logo.jpg' : '/assets/hero.jpg');
+        reset.hidden = !saved[key];
+      }
+      var up = el('button', { class: 'primary small', type: 'button', text: 'Upload', onclick: function () {
+        if (!file.files.length) return notice(notes, 'Choose an image first.', 'error');
+        var data = new FormData();
+        data.append('file', file.files[0]);
+        up.disabled = true;
+        api('POST', '/api/admin/settings/images/' + kind, undefined, data)
+          .then(function (saved) { file.value = ''; show(saved); notice(notes, 'Image updated.', 'ok'); })
+          .catch(function (error) { fail(notes, error); })
+          .then(function () { up.disabled = false; });
+      } });
+      return { card: el('section', { class: 'card' }, el('h2', { text: title }), el('p', { class: 'muted', text: help }), preview, el('div', { class: 'actions' }, file, up, reset)), show: show };
+    }
+    var logo = imageCard('logo', 'Logo', 'Shown in the header, footer and browser tab. A square image works best.');
+    var hero = imageCard('hero', 'Main photo', 'The large photo behind the heading on the home page, also used for link previews. A wide workshop photo works best.');
+
     main.appendChild(notes);
     main.appendChild(el('h1', { text: 'Settings' }));
-    fields.forEach(function (f) {
-      inputs[f[0]] = el('input', { id: f[0], maxlength: 200 });
-      form.appendChild(labelled(f[1], inputs[f[0]]));
-    });
-    form.appendChild(el('div', { class: 'actions' }, el('button', { class: 'primary', type: 'submit', text: 'Save settings' })));
+    main.appendChild(el('div', { class: 'row two' }, logo.card, hero.card));
     main.appendChild(form);
-    api('GET', '/api/admin/settings').then(function (s) {
-      fields.forEach(function (f) { inputs[f[0]].value = s[f[0]] || ''; });
+    api('GET', '/api/admin/settings').then(function (saved) {
+      Object.keys(inputs).forEach(function (key) { inputs[key].value = saved[key] || ''; });
+      logo.show(saved);
+      hero.show(saved);
     }).catch(function (error) { fail(notes, error); });
   }
 

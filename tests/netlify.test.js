@@ -35,7 +35,7 @@ test('the function serves the home page through the redirected path', async () =
   const res = await handler(event('/.netlify/functions/server/'), {});
   assert.equal(res.statusCode, 200);
   const body = res.isBase64Encoded ? Buffer.from(res.body, 'base64').toString('utf8') : res.body;
-  assert.match(body, /class="gallery"/);
+  assert.match(body, /id="products"/);
 });
 
 test('admin API calls keep their auth checks behind the function', async () => {

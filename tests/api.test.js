@@ -76,10 +76,9 @@ describe('public site', () => {
   test('home page renders visible products only, with no placeholders left', async () => {
     const res = await call('GET', '/');
     assert.equal(res.status, 200);
-    assert.match(res.text, /id="tile-01"/);
-    assert.doesNotMatch(res.text, /tile-02/, 'hidden products must not be published');
-    assert.doesNotMatch(res.text, /\{\{[A-Z_0-9]+\}\}/, 'all placeholders are filled');
-    assert.doesNotMatch(res.text, /<!--GALLERY-->/);
+    assert.match(res.text, /data-code="1"/);
+    assert.doesNotMatch(res.text, /data-code="2"/, 'hidden products must not be published');
+    assert.match(res.text, /href="\/products\/1"/);
     assert.match(res.text, /wa\.me\/9647504251661/);
   });
 
@@ -373,20 +372,23 @@ describe('database setup', () => {
 describe('shop features', () => {
   test('the page uses real categories, marks sold-out items, and shows featured items first', async () => {
     const { cookie, csrf } = await login(owner);
-    const cat = await call('POST', '/api/admin/categories', { cookie, csrf, body: { name: 'ڕەسیف' } });
+    const cat = await call('POST', '/api/admin/categories', { cookie, csrf, body: { name: 'ڕەسیف', nameAr: 'رصيف', nameEn: 'Curbs' } });
     assert.equal(cat.status, 201);
     const created = await call('POST', '/api/admin/products', {
       cookie, csrf,
-      body: { code: 70, name: 'Featured curb', categoryId: cat.json.id, stock: 0, visible: true, featured: true, sort: 999 },
+      body: { code: 70, name: 'Featured curb', nameEn: 'Featured curb EN', categoryId: cat.json.id, stock: 0, visible: true, featured: true, sort: 999 },
     });
     assert.equal(created.status, 201, created.text);
     const page = (await call('GET', '/')).text;
-    assert.match(page, /id="tile-70" data-id="70" data-cat="ڕەسیف"/);
-    assert.match(page, /class="soldout"/);
-    assert.ok(page.indexOf('tile-70') < page.indexOf('tile-01'), 'featured products come first');
-    assert.match(page, /<html lang="ckb" dir="rtl">/);
+    assert.match(page, new RegExp(`data-code="70" data-cat="${cat.json.id}"`));
+    assert.match(page, /class="status status-out"/);
+    assert.ok(page.indexOf('data-code="70"') < page.indexOf('data-code="1"'), 'featured products come first');
+    assert.match(page, /<html lang="ku" dir="rtl"/);
     assert.match(page, /<meta property="og:image" content="http:\/\/127\.0\.0\.1:\d+\/assets\/hero\.jpg">/);
     assert.equal((page.match(/<\/body>/g) || []).length, 1, 'the page has one body');
+    const english = (await call('GET', '/en/')).text;
+    assert.match(english, />Curbs</, 'categories are translated');
+    assert.match(english, /Featured curb EN/);
   });
 
   test('sitemap, robots, favicon and health check answer', async () => {
@@ -461,5 +463,154 @@ describe('shop features', () => {
     // 22:30 UTC on 31 Jan is already 1 Feb in Baghdad (UTC+3).
     const start = monthStartMs(new Date(Date.UTC(2026, 0, 31, 22, 30)), 180);
     assert.equal(new Date(start).toISOString(), '2026-01-31T21:00:00.000Z');
+  });
+});
+
+describe('multilingual showroom', () => {
+  const png = () => sharp({ create: { width: 80, height: 60, channels: 3, background: '#777777' } }).png().toBuffer();
+
+  test('each language has its own address, direction, title, description and hreflang links', async () => {
+    const ku = (await call('GET', '/')).text;
+    const ar = (await call('GET', '/ar/')).text;
+    const en = (await call('GET', '/en/')).text;
+    assert.match(ku, /<html lang="ku" dir="rtl"/);
+    assert.match(ar, /<html lang="ar" dir="rtl"/);
+    assert.match(en, /<html lang="en" dir="ltr"/);
+    assert.match(ku, /<title>کارگەی شرێ · کاشیی باخچە و حەوشە<\/title>/);
+    assert.match(ar, /<title>كارگە شري \| بلاط الحدائق والساحات<\/title>/);
+    assert.match(en, /<title>Kargay Shre \| Garden &amp; Courtyard Tiles<\/title>/);
+    assert.match(en, /<meta property="og:title" content="Kargay Shre \| Garden &amp; Courtyard Tiles">/);
+    assert.match(en, /<link rel="canonical" href="http:\/\/127\.0\.0\.1:\d+\/en\/">/);
+    for (const page of [ku, ar, en]) {
+      assert.match(page, /hreflang="ku" href="http:\/\/127\.0\.0\.1:\d+\/"/);
+      assert.match(page, /hreflang="ar" href="http:\/\/127\.0\.0\.1:\d+\/ar\/"/);
+      assert.match(page, /hreflang="en" href="http:\/\/127\.0\.0\.1:\d+\/en\/"/);
+      assert.match(page, /"@type":"LocalBusiness"/);
+    }
+    assert.match(en, /Contact us on WhatsApp/);
+    assert.match(ar, /تواصل معنا عبر واتساب/);
+  });
+
+  test('the default language lives at the root; /ku/ redirects there; a remembered language is restored', async () => {
+    const res = await call('GET', '/ku/products/1');
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get('location'), '/products/1');
+    const remembered = await call('GET', '/', { cookie: 'lang=en' });
+    assert.equal(remembered.status, 302);
+    assert.equal(remembered.headers.get('location'), '/en/');
+  });
+
+  test('every product has its own page with structured data and a prefilled WhatsApp message', async () => {
+    const page = await call('GET', '/en/products/1');
+    assert.equal(page.status, 200);
+    assert.match(page.text, /"@type":"Product"/);
+    assert.match(page.text, /"@type":"BreadcrumbList"/);
+    assert.match(page.text, /<meta property="og:type" content="product">/);
+    const wa = page.text.match(/href="(https:\/\/wa\.me\/[^"]+)"[^>]*data-enquiry="1"/);
+    assert.ok(wa, 'product WhatsApp link');
+    const message = decodeURIComponent(wa[1].split('?text=')[1].replace(/&amp;/g, '&'));
+    assert.match(message, /product #001/);
+    assert.match(message, /size 40 × 40 cm/);
+    assert.match(message, /\/en\/products\/1$/);
+    assert.equal((await call('GET', '/products/0001')).headers.get('location'), '/products/1');
+  });
+
+  test('hidden products are 404 for visitors and previewable for signed-in staff only', async () => {
+    assert.equal((await call('GET', '/products/2')).status, 404);
+    assert.equal((await call('GET', '/products/2?preview')).status, 404);
+    const { cookie } = await login(staff);
+    const preview = await call('GET', '/products/2?preview', { cookie });
+    assert.equal(preview.status, 200);
+    assert.match(preview.text, /<meta name="robots" content="noindex,nofollow">/);
+    assert.equal(preview.headers.get('x-robots-tag'), 'noindex, nofollow');
+  });
+
+  test('unknown pages get a friendly page in the right language', async () => {
+    const res = await call('GET', '/en/nothing-here');
+    assert.equal(res.status, 404);
+    assert.match(res.headers.get('content-type'), /text\/html/);
+    assert.match(res.text, /Page not found/);
+  });
+
+  test('the sitemap lists every page in every language with alternates', async () => {
+    const xml = (await call('GET', '/sitemap.xml')).text;
+    assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/en\/products\/1<\/loc>/);
+    assert.match(xml, /<loc>http:\/\/127\.0\.0\.1:\d+\/ar\/gallery<\/loc>/);
+    assert.match(xml, /xhtml:link rel="alternate" hreflang="ar"/);
+    assert.doesNotMatch(xml, /\/products\/2</, 'hidden products are not listed');
+  });
+
+  test('settings refuse unsafe links; social links appear only when set', async () => {
+    const { cookie, csrf } = await login(owner);
+    const bad = await call('PUT', '/api/admin/settings', { cookie, csrf, body: { facebook_url: 'javascript:alert(1)' } });
+    assert.equal(bad.status, 400);
+    const halfMap = await call('PUT', '/api/admin/settings', { cookie, csrf, body: { map_lat: '36.9', map_lng: '' } });
+    assert.equal(halfMap.status, 400);
+    assert.doesNotMatch((await call('GET', '/')).text, /facebook\.com/);
+    const ok = await call('PUT', '/api/admin/settings', { cookie, csrf, body: { facebook_url: 'https://www.facebook.com/kargay.test', seo_title_en: 'Custom English title' } });
+    assert.equal(ok.status, 200, ok.text);
+    const page = (await call('GET', '/en/')).text;
+    assert.match(page, /https:\/\/www\.facebook\.com\/kargay\.test/);
+    assert.match(page, /<title>Custom English title<\/title>/);
+    await call('PUT', '/api/admin/settings', { cookie, csrf, body: { facebook_url: '', seo_title_en: 'Kargay Shre | Garden & Courtyard Tiles' } });
+  });
+
+  test('workshop gallery: upload, caption in three languages, reorder, delete', async () => {
+    const { cookie, csrf } = await login(staff);
+    const form = new FormData();
+    form.append('files', new Blob([await png()], { type: 'image/png' }), 'a.png');
+    form.append('files', new Blob([await png()], { type: 'image/png' }), 'b.png');
+    const up = await call('POST', '/api/admin/gallery', { cookie, csrf, form });
+    assert.equal(up.status, 201, up.text);
+    assert.equal(up.json.items.length, 2);
+    const [first, second] = up.json.items;
+    assert.match(first.file, /^\/uploads\/gallery\/[a-f0-9]{24}\.webp$/);
+    const patched = await call('PATCH', `/api/admin/gallery/${second.id}`, { cookie, csrf, body: { caption: 'وێنە', captionEn: 'Workshop', featured: true } });
+    assert.equal(patched.status, 200);
+    const ordered = await call('PUT', '/api/admin/gallery/order', { cookie, csrf, body: { ids: [second.id, first.id] } });
+    assert.deepEqual(ordered.json.items.map((g) => g.id), [second.id, first.id]);
+    const galleryPage = (await call('GET', '/en/gallery')).text;
+    assert.match(galleryPage, /data-caption="Workshop"/);
+    assert.match((await call('GET', '/en/')).text, /id="gallery"/, 'the home page shows a gallery section once photos exist');
+    const removed = await call('DELETE', `/api/admin/gallery/${first.id}`, { cookie, csrf });
+    assert.equal(removed.json.items.length, 1);
+    assert.equal((await call('PUT', '/api/admin/gallery/order', { cookie, csrf, body: { ids: [999] } })).status, 400);
+  });
+
+  test('only the owner can replace the logo; the page uses the new one', async () => {
+    const staffSession = await login(staff);
+    const form = () => {
+      const f = new FormData();
+      return png().then((buf) => { f.append('file', new Blob([buf], { type: 'image/png' }), 'logo.png'); return f; });
+    };
+    assert.equal((await call('POST', '/api/admin/settings/images/logo', { ...staffSession, form: await form() })).status, 403);
+    const { cookie, csrf } = await login(owner);
+    const res = await call('POST', '/api/admin/settings/images/logo', { cookie, csrf, form: await form() });
+    assert.equal(res.status, 200, res.text);
+    assert.match(res.json.logo_url, /^\/uploads\/site\/[a-f0-9]{24}-thumb\.webp$/);
+    assert.match((await call('GET', '/')).text, new RegExp(`src="${res.json.logo_url}"`));
+    const reset = await call('DELETE', '/api/admin/settings/images/logo', { cookie, csrf });
+    assert.equal(reset.json.logo_url, '');
+  });
+
+  test('the dashboard reports availability, categories, recent products and activity', async () => {
+    const { cookie } = await login(owner);
+    const stats = (await call('GET', '/api/admin/stats', { cookie })).json;
+    for (const key of ['products', 'available', 'outOfStock', 'categories']) assert.equal(typeof stats[key], 'number', key);
+    assert.ok(stats.recentProducts.length > 0);
+    assert.ok(stats.activity.length > 0);
+    const staffStats = (await call('GET', '/api/admin/stats', await login(staff))).json;
+    assert.deepEqual(staffStats.activity, [], 'staff do not see the audit trail');
+  });
+
+  test('a product can be saved with names in three languages and only changed fields are updated', async () => {
+    const { cookie, csrf } = await login(staff);
+    const created = await call('POST', '/api/admin/products', { cookie, csrf, body: { code: 80, name: 'ناو', nameAr: 'اسم', nameEn: 'Name', description: 'وەسف' } });
+    assert.equal(created.status, 201);
+    await call('PATCH', `/api/admin/products/${created.json.id}`, { cookie, csrf, body: { price: 9000 } });
+    const p = (await call('GET', `/api/admin/products/${created.json.id}`, { cookie })).json;
+    assert.equal(p.nameAr, 'اسم');
+    assert.equal(p.description, 'وەسف', 'a partial update keeps the other fields');
+    assert.equal(p.availability, 'available');
   });
 });

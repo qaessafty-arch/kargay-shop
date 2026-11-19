@@ -102,23 +102,42 @@ Netlify's own rate limiting rules can add a stronger limit on `/api/auth/login`.
 
 ## Changing the design
 
-The public page is `views/index.template.html`, with placeholders (`{{SHOP_NAME}}`, `{{PHONE_1}}`,
-`{{WA_NUMBER}}`, …) that the server fills from **Settings**. All colours and layout are in
-`public/css/site.css`; the colour variables at the top of that file change the whole look at once.
-The admin colours are in `public/admin/admin.css`. The gallery scripts are in `public/js/`.
+The public pages are rendered on the server in `src/views.js`, in Kurdish, Arabic or English.
+Interface text for all three languages is in `src/i18n.js`. All colours, spacing and layout are in
+`public/css/site.css`; the variables at the top of that file change the whole look at once.
+The admin uses `public/admin/admin.css` with the same palette.
 
-## Shop features
+## Pages and languages
 
-- **Gallery filters** use the product categories from the admin, so a new category appears as a filter by itself.
-- **Featured** products are shown first. Products with stock set to 0 show "نەماوە" (out of stock).
-- **Stock** goes down when an order is confirmed or delivered, and comes back if it is cancelled or reopened.
-  Products with no stock number are not tracked.
-- **Orders** can be searched by customer name, phone number or order number.
-- **My account** lets every user change their own password; their other devices are signed out.
-- **Link previews**: sharing the site on WhatsApp or social media shows the shop name, description and photo.
-  Set `SITE_URL` (for example `https://kargay-shop.vercel.app`) if you use a custom domain.
-- **Monitoring**: `GET /api/health` returns `{"ok":true}` when the site and database are working.
-- `sitemap.xml` and `robots.txt` are generated for search engines; the admin is never indexed.
+| Address | Page |
+| --- | --- |
+| `/`, `/ar/`, `/en/` | Home page in the default language, Arabic, English (the default language is set in Settings) |
+| `/products/7`, `/ar/products/7`, `/en/products/7` | One page per product |
+| `/gallery` (and `/ar/gallery`, `/en/gallery`) | Workshop photos and all product photos |
+
+Every page has its own title, description, canonical link, hreflang links, Open Graph and X (Twitter)
+preview tags and structured data (LocalBusiness, Product, BreadcrumbList), so Google and WhatsApp, Facebook
+or Telegram previews show the right language without running JavaScript. A visitor who picks a language is
+taken back to it next time. Old shared links like `/#tile-05` open the product page.
+
+## Managing the site (admin)
+
+- **Products**: number (suggested automatically), names and descriptions in three languages, category, size,
+  price, stock, visibility, featured, several photos (the first is the main photo), preview of hidden products.
+- **Availability** shown to visitors: *Out of stock* when stock is 0, *Contact for price* when there is no
+  price, otherwise *Available*. Prices are never invented: a product without a price shows no price.
+- **Categories** in three languages; they become the filter buttons in the showroom.
+- **Gallery**: workshop photos with captions in three languages, reorder, featured photo for the About section.
+- **Settings**: factory name, logo and main photo, WhatsApp number, phones, address, Google Maps link and
+  optional coordinates (an embedded map appears only when coordinates are set), Facebook / Instagram / TikTok
+  (hidden when empty), page titles and descriptions per language, default language.
+- **Orders, users, audit log and My account** as before. Stock goes down when an order is confirmed or
+  delivered and comes back if it is cancelled.
+
+## Monitoring
+
+`GET /api/health` returns `{"ok":true}` when the site and database are working. Set `SITE_URL`
+(for example `https://kargay-shop.vercel.app`) if you use a custom domain, so shared links use it.
 
 ## What is not included (yet)
 
@@ -136,8 +155,8 @@ The admin colours are in `public/admin/admin.css`. The gallery scripts are in `p
 | `src/db.js` | Schema and transactions |
 | `src/auth.js` | Passwords, sessions, roles, CSRF |
 | `src/uploads.js` | Image validation and WebP conversion |
-| `src/render.js` | Builds the public page from the template and database |
-| `views/index.template.html` | Public page (original design) |
+| `src/views.js` | Public pages (home, product, gallery, 404) |
+| `src/i18n.js` | Kurdish, Arabic and English interface text |
 | `public/admin/` | Admin interface |
 | `scripts/create-admin.js` | Creates the owner account |
 | `scripts/import-legacy.js` | Imports the original page's products (run once) |

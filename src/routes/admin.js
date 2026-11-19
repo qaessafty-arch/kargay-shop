@@ -3,11 +3,13 @@ import multer from 'multer';
 import { config } from '../config.js';
 import { hashPassword, requireAuth, requireCsrf, requireRole } from '../auth.js';
 import { audit } from '../audit.js';
-import { findProduct, findProductByCode, getSettings, listProducts, renumberImages } from '../catalog.js';
-import { removeUpload, storeProductImage } from '../uploads.js';
+import { allCategories, availability, findProduct, findProductByCode, galleryImages, getSettings, listProducts, renumberImages } from '../catalog.js';
+import { removeUpload, storeImage, storeProductImage } from '../uploads.js';
 import { importLegacyBatch, loadManifest } from '../legacy-import.js';
 import {
+  categoryPatchSchema,
   categorySchema,
+  galleryPatchSchema,
   idParam,
   newUserSchema,
   orderSchema,
@@ -37,7 +39,12 @@ function productJson(row) {
     id: row.id,
     code: row.code,
     name: row.name,
+    nameAr: row.name_ar,
+    nameEn: row.name_en,
     description: row.description,
+    descriptionAr: row.description_ar,
+    descriptionEn: row.description_en,
+    availability: availability(row),
     categoryId: row.category_id,
     categoryName: row.category_name,
     widthCm: row.width_cm,
@@ -66,6 +73,13 @@ export function monthStartMs(now, utcOffsetMinutes) {
   return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - utcOffsetMinutes * 60000;
 }
 
+async function saveSetting(db, key, value) {
+  await db.run(
+    'INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+    [key, value, Date.now()],
+  );
+}
+
 export function adminRouter({ db, writeLimiter }) {
   const router = Router();
   const owner = requireRole('owner');
@@ -79,20 +93,38 @@ export function adminRouter({ db, writeLimiter }) {
   router.get('/stats', any, async (req, res) => {
     const count = async (sql, params = []) => (await db.get(sql, params)).n;
     const since = monthStartMs(new Date(), config.shopUtcOffsetMinutes);
-    const [products, visible, featured, lowStock, pendingOrders, deliveredThisMonth, revenue, enquiries] = await Promise.all([
-      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL'),
-      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND visible = 1'),
-      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND featured = 1'),
-      count('SELECT COUNT(*) AS n FROM products WHERE deleted_at IS NULL AND stock IS NOT NULL AND stock <= 3'),
-      count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending'"),
-      count("SELECT COUNT(*) AS n FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
-      db.get("SELECT COALESCE(SUM(total), 0)::bigint AS total FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
-      db.get('SELECT COALESCE(SUM(enquiry_count), 0)::bigint AS total FROM products'),
-    ]);
+    const live = 'deleted_at IS NULL';
+    const [products, visible, available, outOfStock, categories, featured, lowStock, pendingOrders, deliveredThisMonth, revenue, enquiries, recent] =
+      await Promise.all([
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live}`),
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live} AND visible = 1`),
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live} AND visible = 1 AND (stock IS NULL OR stock > 0)`),
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live} AND stock = 0`),
+        count('SELECT COUNT(*) AS n FROM categories'),
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live} AND featured = 1`),
+        count(`SELECT COUNT(*) AS n FROM products WHERE ${live} AND stock IS NOT NULL AND stock > 0 AND stock <= 3`),
+        count("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending'"),
+        count("SELECT COUNT(*) AS n FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
+        db.get("SELECT COALESCE(SUM(total), 0)::bigint AS total FROM orders WHERE status = 'delivered' AND updated_at >= ?", [since]),
+        db.get('SELECT COALESCE(SUM(enquiry_count), 0)::bigint AS total FROM products'),
+        listProducts(db, { status: 'all', limit: 5, order: 'newest' }),
+      ]);
+    // Recent activity comes from the audit log, which only the owner may read.
+    const activity =
+      req.auth.user.role === 'owner'
+        ? await db.all(
+            `SELECT a.action, a.entity, a.entity_id, a.at, u.display_name AS user_name
+               FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+              WHERE a.action NOT IN ('login', 'login.failed')
+              ORDER BY a.at DESC, a.id DESC LIMIT 8`,
+          )
+        : [];
     res.json({
-      products, visible, featured, lowStock, pendingOrders, deliveredThisMonth,
+      products, visible, available, outOfStock, categories, featured, lowStock, pendingOrders, deliveredThisMonth,
       revenueThisMonth: revenue.total,
       enquiriesTotal: enquiries.total,
+      recentProducts: recent.items.map(productJson),
+      activity: activity.map((a) => ({ action: a.action, entity: a.entity, entityId: a.entity_id, at: a.at, user: a.user_name })),
     });
   });
 
@@ -114,15 +146,20 @@ export function adminRouter({ db, writeLimiter }) {
       const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
       return `"${safe.replace(/"/g, '""')}"`;
     };
-    const header = ['code', 'name', 'category', 'width_cm', 'height_cm', 'price', 'stock', 'visible', 'enquiries'];
+    const header = ['code', 'name_ku', 'name_ar', 'name_en', 'category', 'width_cm', 'height_cm', 'price', 'stock', 'availability', 'visible', 'enquiries'];
     const lines = items.map((p) =>
-      [p.code, p.name, p.category_name, p.width_cm, p.height_cm, p.price, p.stock, p.visible ? 'yes' : 'no', p.enquiry_count]
+      [p.code, p.name, p.name_ar, p.name_en, p.category_name, p.width_cm, p.height_cm, p.price, p.stock, availability(p), p.visible ? 'yes' : 'no', p.enquiry_count]
         .map(cell)
         .join(','),
     );
     res.type('text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="products.csv"');
     res.send('﻿' + [header.join(','), ...lines].join('\n'));
+  });
+
+  // Suggests the next free product number for the "new product" form.
+  router.get('/products/next-code', any, async (req, res) => {
+    res.json({ code: (await db.get('SELECT COALESCE(MAX(code), 0) + 1 AS next FROM products')).next });
   });
 
   router.get('/products/:id', any, async (req, res) => {
@@ -143,13 +180,17 @@ export function adminRouter({ db, writeLimiter }) {
       const code = d.code ?? (await tx.get('SELECT COALESCE(MAX(code), 0) + 1 AS next FROM products')).next;
       if (await findProductByCode(tx, code)) return { error: 'That product code is already used.' };
       const info = await tx.run(
-        `INSERT INTO products (code, name, description, category_id, width_cm, height_cm, price, stock,
-           visible, featured, sort, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+        `INSERT INTO products (code, name, name_ar, name_en, description, description_ar, description_en, category_id,
+           width_cm, height_cm, price, stock, visible, featured, sort, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
         [
           code,
           d.name,
+          d.nameAr,
+          d.nameEn,
           d.description,
+          d.descriptionAr,
+          d.descriptionEn,
           d.categoryId ?? null,
           d.widthCm ?? null,
           d.heightCm ?? null,
@@ -179,7 +220,8 @@ export function adminRouter({ db, writeLimiter }) {
 
     const d = parsed.data;
     const map = {
-      code: 'code', name: 'name', description: 'description', categoryId: 'category_id', widthCm: 'width_cm',
+      code: 'code', name: 'name', nameAr: 'name_ar', nameEn: 'name_en', description: 'description',
+      descriptionAr: 'description_ar', descriptionEn: 'description_en', categoryId: 'category_id', widthCm: 'width_cm',
       heightCm: 'height_cm', price: 'price', stock: 'stock', visible: 'visible', featured: 'featured', sort: 'sort',
     };
     const sets = [];
@@ -296,16 +338,20 @@ export function adminRouter({ db, writeLimiter }) {
 
   // ---------- Categories ----------
   router.get('/categories', any, async (req, res) => {
-    res.json({ items: await db.all('SELECT id, name, sort FROM categories ORDER BY sort, name') });
+    const rows = await allCategories(db);
+    const counts = await db.all('SELECT category_id, COUNT(*) AS n FROM products WHERE deleted_at IS NULL GROUP BY category_id');
+    const byId = new Map(counts.map((r) => [r.category_id, r.n]));
+    res.json({ items: rows.map((c) => ({ id: c.id, name: c.name, nameAr: c.name_ar, nameEn: c.name_en, sort: c.sort, products: byId.get(c.id) || 0 })) });
   });
 
   router.post('/categories', ...write, any, async (req, res) => {
     const parsed = parse(categorySchema, req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
-    if (await db.get('SELECT id FROM categories WHERE name = ?', [parsed.data.name])) {
+    const d = parsed.data;
+    if (await db.get('SELECT id FROM categories WHERE name = ?', [d.name])) {
       return res.status(409).json({ error: 'A category with that name already exists.' });
     }
-    const info = await db.run('INSERT INTO categories (name, sort) VALUES (?, ?) RETURNING id', [parsed.data.name, parsed.data.sort]);
+    const info = await db.run('INSERT INTO categories (name, name_ar, name_en, sort) VALUES (?, ?, ?, ?) RETURNING id', [d.name, d.nameAr, d.nameEn, d.sort]);
     await audit(db, { userId: req.auth.user.id, action: 'category.create', entity: 'category', entityId: info.id });
     res.status(201).json({ id: info.id });
   });
@@ -313,13 +359,17 @@ export function adminRouter({ db, writeLimiter }) {
   router.patch('/categories/:id', ...write, any, async (req, res) => {
     const id = idOf(req.params.id);
     if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
-    const parsed = parse(categorySchema.partial(), req.body);
+    const parsed = parse(categoryPatchSchema, req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const d = parsed.data;
     if (d.name !== undefined && (await db.get('SELECT id FROM categories WHERE name = ? AND id <> ?', [d.name, id.data]))) {
       return res.status(409).json({ error: 'A category with that name already exists.' });
     }
-    await db.run('UPDATE categories SET name = COALESCE(?, name), sort = COALESCE(?, sort) WHERE id = ?', [d.name ?? null, d.sort ?? null, id.data]);
+    const info = await db.run(
+      'UPDATE categories SET name = COALESCE(?, name), name_ar = COALESCE(?, name_ar), name_en = COALESCE(?, name_en), sort = COALESCE(?, sort) WHERE id = ?',
+      [d.name ?? null, d.nameAr ?? null, d.nameEn ?? null, d.sort ?? null, id.data],
+    );
+    if (!info.changes) return res.status(404).json({ error: 'Category not found.' });
     await audit(db, { userId: req.auth.user.id, action: 'category.update', entity: 'category', entityId: id.data });
     res.json({ ok: true });
   });
@@ -330,6 +380,108 @@ export function adminRouter({ db, writeLimiter }) {
     await db.run('DELETE FROM categories WHERE id = ?', [id.data]);
     await audit(db, { userId: req.auth.user.id, action: 'category.delete', entity: 'category', entityId: id.data });
     res.json({ ok: true });
+  });
+
+  // ---------- Gallery (workshop photos) ----------
+  const galleryJson = (g) => ({
+    id: g.id, file: g.file, thumb: g.thumb, caption: g.caption, captionAr: g.caption_ar, captionEn: g.caption_en, featured: !!g.featured, sort: g.sort,
+  });
+
+  router.get('/gallery', any, async (req, res) => {
+    res.json({ items: (await galleryImages(db)).map(galleryJson) });
+  });
+
+  router.post('/gallery', ...write, any, upload.array('files', config.maxUploadFiles), async (req, res) => {
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ error: 'Choose at least one JPEG, PNG or WebP image (up to 6 MB each).' });
+    const stored = [];
+    try {
+      for (const file of files) stored.push(await storeImage(file.buffer, 'gallery'));
+    } catch (error) {
+      for (const item of stored) {
+        await removeUpload(item.file);
+        await removeUpload(item.thumb);
+      }
+      return res.status(400).json({ error: error.message || 'One of the images could not be read.' });
+    }
+    await db.transaction(async (tx) => {
+      const next = (await tx.get('SELECT COALESCE(MAX(sort), -1) + 1 AS next FROM gallery_images')).next;
+      for (const [i, item] of stored.entries()) {
+        await tx.run('INSERT INTO gallery_images (file, thumb, sort, created_at) VALUES (?, ?, ?, ?)', [item.file, item.thumb, next + i, Date.now()]);
+      }
+      await audit(tx, { userId: req.auth.user.id, action: 'gallery.add', entity: 'gallery', detail: { count: stored.length } });
+    });
+    res.status(201).json({ items: (await galleryImages(db)).map(galleryJson) });
+  });
+
+  router.patch('/gallery/:id', ...write, any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const parsed = parse(galleryPatchSchema, req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const d = parsed.data;
+    const info = await db.run(
+      `UPDATE gallery_images SET caption = COALESCE(?, caption), caption_ar = COALESCE(?, caption_ar), caption_en = COALESCE(?, caption_en),
+         featured = COALESCE(?, featured) WHERE id = ?`,
+      [d.caption ?? null, d.captionAr ?? null, d.captionEn ?? null, d.featured === undefined ? null : d.featured ? 1 : 0, id.data],
+    );
+    if (!info.changes) return res.status(404).json({ error: 'Photo not found.' });
+    await audit(db, { userId: req.auth.user.id, action: 'gallery.update', entity: 'gallery', entityId: id.data });
+    res.json({ items: (await galleryImages(db)).map(galleryJson) });
+  });
+
+  router.put('/gallery/order', ...write, any, async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number) : null;
+    const existing = new Set((await galleryImages(db)).map((g) => g.id));
+    if (!ids || ids.length !== existing.size || ids.some((n) => !existing.has(n))) return res.status(400).json({ error: 'Order does not match the gallery.' });
+    await db.transaction(async (tx) => {
+      for (const [index, imageId] of ids.entries()) await tx.run('UPDATE gallery_images SET sort = ? WHERE id = ?', [index, imageId]);
+    });
+    res.json({ items: (await galleryImages(db)).map(galleryJson) });
+  });
+
+  router.delete('/gallery/:id', ...write, any, async (req, res) => {
+    const id = idOf(req.params.id);
+    if (!id.success) return res.status(400).json({ error: 'Invalid id.' });
+    const row = await db.get('SELECT id, file, thumb FROM gallery_images WHERE id = ?', [id.data]);
+    if (!row) return res.status(404).json({ error: 'Photo not found.' });
+    await db.run('DELETE FROM gallery_images WHERE id = ?', [row.id]);
+    await removeUpload(row.file);
+    await removeUpload(row.thumb);
+    await audit(db, { userId: req.auth.user.id, action: 'gallery.delete', entity: 'gallery', entityId: row.id });
+    res.json({ items: (await galleryImages(db)).map(galleryJson) });
+  });
+
+  // ---------- Logo and hero photo (owner) ----------
+  router.post('/settings/images/:kind', ...write, owner, upload.single('file'), async (req, res) => {
+    const key = { logo: 'logo_url', hero: 'hero_url' }[req.params.kind];
+    if (!key) return res.status(404).json({ error: 'Not found.' });
+    if (!req.file) return res.status(400).json({ error: 'Choose a JPEG, PNG or WebP image (up to 6 MB).' });
+    let stored;
+    try {
+      stored = await storeImage(req.file.buffer, 'site');
+    } catch (error) {
+      return res.status(400).json({ error: error.message || 'The image could not be read.' });
+    }
+    const before = (await getSettings(db))[key];
+    // The logo is small, so the thumbnail is enough; the hero uses the full-size version.
+    const url = key === 'logo_url' ? stored.thumb : stored.file;
+    await saveSetting(db, key, url);
+    if (key === 'logo_url') await removeUpload(stored.file);
+    else await removeUpload(stored.thumb);
+    if (before) await removeUpload(before);
+    await audit(db, { userId: req.auth.user.id, action: 'settings.image', entity: 'settings', detail: { kind: req.params.kind } });
+    res.json(await getSettings(db));
+  });
+
+  router.delete('/settings/images/:kind', ...write, owner, async (req, res) => {
+    const key = { logo: 'logo_url', hero: 'hero_url' }[req.params.kind];
+    if (!key) return res.status(404).json({ error: 'Not found.' });
+    const before = (await getSettings(db))[key];
+    await saveSetting(db, key, '');
+    if (before) await removeUpload(before);
+    await audit(db, { userId: req.auth.user.id, action: 'settings.image.reset', entity: 'settings', detail: { kind: req.params.kind } });
+    res.json(await getSettings(db));
   });
 
   // ---------- Orders ----------

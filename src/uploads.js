@@ -19,7 +19,13 @@ export const uploadsRoot = path.join(config.dataDir, 'uploads');
  * On Vercel the files go to Vercel Blob (public URLs). Locally they go to the data folder.
  * Returns { file, thumb } as URLs.
  */
-export async function storeProductImage(buffer, productCode) {
+export function storeProductImage(buffer, productCode) {
+  return storeImage(buffer, `products/${Number(productCode)}`);
+}
+
+/** Same as storeProductImage, for a fixed folder: `products/<code>`, `gallery` or `site`. */
+export async function storeImage(buffer, folder) {
+  if (!/^(products\/\d+|gallery|site)$/.test(folder)) throw new Error('Invalid photo folder.');
   const meta = await sharp(buffer, { limitInputPixels: MAX_INPUT_PIXELS, failOn: 'error' }).metadata();
   if (!ALLOWED_FORMATS.has(meta.format)) {
     throw new Error('Only JPEG, PNG or WebP images are allowed.');
@@ -41,7 +47,6 @@ export async function storeProductImage(buffer, productCode) {
   const thumbName = `${id}-thumb.webp`;
 
   if (config.blobToken) {
-    const folder = `products/${productCode}`;
     const mainBlob = await put(`${folder}/${mainName}`, main, {
       access: 'public',
       contentType: 'image/webp',
@@ -60,20 +65,20 @@ export async function storeProductImage(buffer, productCode) {
   if (isNetlify()) {
     const toBytes = (buf) => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
     const store = photoStore();
-    await store.set(`products/${productCode}/${mainName}`, toBytes(main), { metadata: { contentType: 'image/webp' } });
-    await store.set(`products/${productCode}/${thumbName}`, toBytes(thumb), { metadata: { contentType: 'image/webp' } });
-    return { file: `/media/products/${productCode}/${mainName}`, thumb: `/media/products/${productCode}/${thumbName}` };
+    await store.set(`${folder}/${mainName}`, toBytes(main), { metadata: { contentType: 'image/webp' } });
+    await store.set(`${folder}/${thumbName}`, toBytes(thumb), { metadata: { contentType: 'image/webp' } });
+    return { file: `/media/${folder}/${mainName}`, thumb: `/media/${folder}/${thumbName}` };
   }
 
   if (config.isProduction) {
     throw new Error('Photo storage is not configured. Add the Vercel Blob or Netlify Blobs store to the project.');
   }
 
-  const dir = path.join(uploadsRoot, 'products', String(productCode));
+  const dir = path.join(uploadsRoot, ...folder.split('/'));
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, mainName), main);
   fs.writeFileSync(path.join(dir, thumbName), thumb);
-  const base = `/uploads/products/${productCode}`;
+  const base = `/uploads/${folder}`;
   return { file: `${base}/${mainName}`, thumb: `${base}/${thumbName}` };
 }
 
