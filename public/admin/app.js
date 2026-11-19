@@ -5,6 +5,49 @@
   var app = document.getElementById('app');
   var state = { user: null, csrf: null, settings: null, categories: [], view: 'dashboard', main: null };
 
+  // ---------- Language (Kurdish, Arabic, English) ----------
+  // Interface text is written in English in this file and translated through the dictionary in i18n.js.
+  var LANGS = [['ku', 'کوردی'], ['ar', 'العربية'], ['en', 'English']];
+  var DICT = window.ADMIN_I18N || {};
+  var LANG = (function () {
+    var saved = null;
+    try { saved = window.localStorage.getItem('ks-admin-lang'); } catch (e) { /* storage blocked */ }
+    if (saved === 'ku' || saved === 'ar' || saved === 'en') return saved;
+    var nav = (navigator.language || '').toLowerCase();
+    if (nav.indexOf('ar') === 0) return 'ar';
+    if (nav.indexOf('en') === 0) return 'en';
+    return 'ku';
+  })();
+
+  /** Translates an interface string; {name} placeholders are filled from vars. Unknown text is left as it is. */
+  function t(text, vars) {
+    var out = text;
+    if (LANG !== 'en' && typeof text === 'string' && DICT[LANG] && Object.prototype.hasOwnProperty.call(DICT[LANG], text)) out = DICT[LANG][text];
+    if (vars) Object.keys(vars).forEach(function (k) { out = out.split('{' + k + '}').join(String(vars[k])); });
+    return out;
+  }
+
+  function applyLang() {
+    document.documentElement.lang = LANG === 'ku' ? 'ckb' : LANG;
+    document.documentElement.dir = LANG === 'en' ? 'ltr' : 'rtl';
+    document.title = t('Shop admin');
+  }
+
+  function setLang(lang) {
+    LANG = lang;
+    try { window.localStorage.setItem('ks-admin-lang', lang); } catch (e) { /* storage blocked */ }
+    applyLang();
+  }
+
+  function langSwitch(onChange) {
+    var nav = el('nav', { class: 'lang-switch', 'aria-label': 'Language' });
+    LANGS.forEach(function (l) {
+      nav.appendChild(el('button', { type: 'button', class: 'small', lang: l[0] === 'ku' ? 'ckb' : l[0], 'aria-current': l[0] === LANG ? 'true' : null,
+        onclick: function () { if (l[0] !== LANG) { setLang(l[0]); onChange(); } } }, document.createTextNode(l[1])));
+    });
+    return nav;
+  }
+
   // ---------- DOM helpers ----------
   function el(tag, props) {
     var node = document.createElement(tag);
@@ -13,7 +56,8 @@
       var value = attrs[key];
       if (value === null || value === undefined || value === false) return;
       if (key === 'class') node.className = value;
-      else if (key === 'text') node.textContent = String(value);
+      else if (key === 'text') node.textContent = t(String(value));
+      else if ((key === 'placeholder' || key === 'aria-label' || key === 'title' || key === 'alt') && typeof value === 'string') node.setAttribute(key, t(value));
       else if (key.indexOf('on') === 0 && typeof value === 'function') node.addEventListener(key.slice(2), value);
       else if (key === 'value') node.value = String(value);
       else if (value === true) node.setAttribute(key, '');
@@ -28,7 +72,7 @@
   function appendChildren(node, child) {
     if (child === null || child === undefined || child === false) return;
     if (Array.isArray(child)) return child.forEach(function (c) { appendChildren(node, c); });
-    node.appendChild(child instanceof Node ? child : document.createTextNode(String(child)));
+    node.appendChild(child instanceof Node ? child : document.createTextNode(typeof child === 'string' ? t(child) : String(child)));
   }
 
   function clear(node) {
@@ -48,7 +92,7 @@
   }
 
   function when(ms) {
-    return ms ? new Date(ms).toLocaleString() : '—';
+    return ms ? new Date(ms).toLocaleString(LANG === 'ar' ? 'ar-IQ-u-nu-latn' : 'en-GB') : '—';
   }
 
   function pill(text, kind) {
@@ -80,7 +124,7 @@
       }
       if (res.status === 204) return null;
       return res.json().catch(function () { return null; }).then(function (data) {
-        if (!res.ok) throw new ApiError((data && data.error) || 'Request failed (' + res.status + ').', res.status);
+        if (!res.ok) throw new ApiError(t((data && data.error) || t('Request failed ({n}).', { n: res.status })), res.status);
         return data;
       });
     });
@@ -88,7 +132,7 @@
 
   function fail(container, error) {
     if (error && error.status === 401) return;
-    notice(container, error && error.message ? error.message : 'Something went wrong.', 'error');
+    notice(container, error && error.message ? t(error.message) : 'Something went wrong.', 'error');
   }
 
   // ---------- Login ----------
@@ -122,6 +166,7 @@
       el('label', { for: 'password', text: 'Password' }), password,
       el('div', { class: 'actions' }, submit)
     );
+    app.appendChild(langSwitch(function () { renderLogin(message); }));
     app.appendChild(form);
     email.focus();
   }
@@ -160,6 +205,7 @@
       el('label', { for: 'setup-password', text: 'Password (12+ characters)' }), password,
       el('div', { class: 'actions' }, submit)
     ));
+    app.insertBefore(langSwitch(renderSetup), app.firstChild);
     token.focus();
   }
 
@@ -198,12 +244,13 @@
         text: tab.label,
       }));
     });
-    tabs.appendChild(el('a', { class: 'button small', href: '/', target: '_blank', rel: 'noopener', style: 'margin:auto 0 auto auto', text: 'View site' }));
+    tabs.appendChild(el('a', { class: 'button small view-site', href: LANG === 'ku' ? '/' : '/' + LANG + '/', target: '_blank', rel: 'noopener', text: 'View site' }));
 
     var logout = el('button', { type: 'button', class: 'small', text: 'Sign out', onclick: signOut });
     var top = el('header', { class: 'topbar' },
       el('span', { class: 'brand', text: 'Shop admin' }),
-      el('span', { class: 'who' }, state.user.displayName + ' · ' + state.user.role + ' · ', logout)
+      el('span', { class: 'who' }, state.user.displayName + ' · ' + t(state.user.role) + ' · ', logout),
+      langSwitch(renderShell)
     );
     state.main = el('main', { id: 'main' });
     app.appendChild(top);
@@ -217,7 +264,7 @@
     var nav = app.querySelector('.tabs');
     if (nav) {
       Array.prototype.forEach.call(nav.querySelectorAll('button'), function (b) {
-        b.setAttribute('aria-current', b.textContent === labelFor(view) ? 'page' : 'false');
+        b.setAttribute('aria-current', b.textContent === t(labelFor(view)) ? 'page' : 'false');
         if (b.getAttribute('aria-current') === 'false') b.removeAttribute('aria-current');
       });
     }
@@ -288,7 +335,7 @@
     main.appendChild(el('h1', { text: 'My account' }));
     main.appendChild(el('div', { class: 'card' },
       el('p', null, el('strong', { text: state.user.displayName })),
-      el('p', { class: 'muted', text: state.user.email + ' · ' + state.user.role })));
+      el('p', { class: 'muted', text: state.user.email + ' · ' + t(state.user.role) })));
     main.appendChild(box);
     main.appendChild(form);
   }
@@ -346,10 +393,10 @@
     card.appendChild(status);
     api('GET', '/api/admin/import-legacy').then(function (info) {
       if (!info.remaining) {
-        status.textContent = 'All ' + info.total + ' original products are in the shop.';
+        status.textContent = t('All {n} original products are in the shop.', { n: info.total });
         return;
       }
-      status.textContent = info.remaining + ' of ' + info.total + ' original products (with photos) are not imported yet.';
+      status.textContent = t('{a} of {b} original products (with photos) are not imported yet.', { a: info.remaining, b: info.total });
       var button = el('button', { class: 'primary', type: 'button', text: 'Import original products' });
       button.addEventListener('click', function () {
         button.disabled = true;
@@ -357,11 +404,11 @@
         (function step() {
           api('POST', '/api/admin/import-legacy').then(function (result) {
             failures = failures.concat(result.failed || []);
-            status.textContent = 'Importing… ' + result.remaining + ' left.';
+            status.textContent = t('Importing… {n} left.', { n: result.remaining });
             if (result.remaining > 0 && result.imported > 0) return step();
             status.textContent = failures.length
-              ? 'Import finished with ' + failures.length + ' problem(s): ' + failures.map(function (f) { return '#' + f.code + ' ' + f.reason; }).join('; ')
-              : 'Import finished.';
+              ? t('Import finished with {n} problem(s):', { n: failures.length }) + ' ' + failures.map(function (f) { return '#' + f.code + ' ' + f.reason; }).join('; ')
+              : t('Import finished.');
             button.remove();
           }).catch(function (error) {
             fail(card, error);
@@ -421,7 +468,7 @@
             el('tbody', null, rows)));
         }
         clear(pager);
-        pager.appendChild(el('span', { text: data.total + ' products · page ' + data.page + ' of ' + data.pages }));
+        pager.appendChild(el('span', { text: t('{n} products · page {p} of {q}', { n: data.total, p: data.page, q: data.pages }) }));
         pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page <= 1, text: 'Previous', onclick: function () { page--; load(); } }));
         pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page >= data.pages, text: 'Next', onclick: function () { page++; load(); } }));
       }).catch(function (error) { clear(results); fail(results, error); });
@@ -532,7 +579,7 @@
     form.appendChild(el('h2', { class: 'form-section', text: 'Size, price and stock' }));
     form.appendChild(el('div', { class: 'row' },
       labelled('Width (cm)', fields.widthCm), labelled('Height (cm)', fields.heightCm),
-      labelled('Price (' + ((state.settings && state.settings.currency) || 'IQD') + ')', fields.price),
+      labelled(t('Price ({c})', { c: (state.settings && state.settings.currency) || 'IQD' }), fields.price),
       labelled('Stock', fields.stock), labelled('Display order', fields.sort)));
     form.appendChild(el('p', { class: 'muted', text: 'Shown to visitors as: Out of stock when stock is 0; Contact for price when there is no price; otherwise Available. Leave stock empty if you do not track it.' }));
     form.appendChild(el('div', { class: 'row' },
@@ -549,7 +596,7 @@
     main.appendChild(form);
 
     if (isNew) {
-      api('GET', '/api/admin/products/next-code').then(function (r) { fields.code.placeholder = 'Next free: ' + r.code; }).catch(function () {});
+      api('GET', '/api/admin/products/next-code').then(function (r) { fields.code.placeholder = t('Next free: {n}', { n: r.code }); }).catch(function () {});
       return;
     }
     api('GET', '/api/admin/products/' + id).then(function (p) {
@@ -561,8 +608,8 @@
       fields.descriptionAr.value = p.descriptionAr || '';
       fields.descriptionEn.value = p.descriptionEn || '';
       // Hidden products open with ?preview, which works only for signed-in shop users.
-      previewLink.href = '/products/' + p.code + (p.visible ? '' : '?preview');
-      previewLink.textContent = p.visible ? 'View on site' : 'Preview (hidden from visitors)';
+      previewLink.href = (LANG === 'ku' ? '' : '/' + LANG) + '/products/' + p.code + (p.visible ? '' : '?preview');
+      previewLink.textContent = t(p.visible ? 'View on site' : 'Preview (hidden from visitors)');
       previewLink.hidden = false;
       fields.widthCm.value = p.widthCm ?? '';
       fields.heightCm.value = p.heightCm ?? '';
@@ -603,7 +650,7 @@
       images.forEach(function (img, index) {
         var first = index === 0;
         grid.appendChild(el('figure', { class: 'image-tile' },
-          el('img', { src: img.thumb || img.file, alt: 'Product photo ' + (index + 1), loading: 'lazy' }),
+          el('img', { src: img.thumb || img.file, alt: t('Product photo {n}', { n: index + 1 }), loading: 'lazy' }),
           el('div', { class: 'tools' },
             first ? pill('main', 'on') : el('button', { class: 'small', type: 'button', text: 'Make main', onclick: function () { reorder(images, index, 0); } }),
             el('button', { class: 'small danger', type: 'button', text: 'Delete', onclick: function () { removeImage(img); } }))));
@@ -623,7 +670,7 @@
     }
 
     function removeImage(img) {
-      if (!window.confirm('Delete this photo? This cannot be undone.')) return;
+      if (!window.confirm(t('Delete this photo? This cannot be undone.'))) return;
       api('DELETE', '/api/admin/images/' + img.id)
         .then(function (data) { paint(data.images); notice(notes, 'Photo deleted.', 'ok'); })
         .catch(function (error) { fail(notes, error); });
@@ -670,9 +717,9 @@
     function show(p) {
       preview.hidden = !p.textureUrl;
       if (p.textureUrl) preview.src = p.textureThumb || p.textureUrl;
-      status.textContent = p.textureUrl
+      status.textContent = t(p.textureUrl
         ? (p.vizEnabled ? 'Texture ready. Customers can preview this tile.' : 'Texture ready. Tick "Customers can preview" above and save to show it in the Studio.')
-        : 'No texture yet. Customers cannot preview this tile until one is added.';
+        : 'No texture yet. Customers cannot preview this tile until one is added.');
       removeBtn.hidden = !p.textureUrl;
     }
 
@@ -691,7 +738,7 @@
       uploadBlob(fileInput.files[0], fileInput.files[0].name).catch(function (e) { fail(notes, e); }).then(function () { uploadBtn.disabled = false; fileInput.value = ''; });
     } });
     var removeBtn = el('button', { class: 'small danger', type: 'button', text: 'Remove texture', onclick: function () {
-      if (!window.confirm('Remove the texture? The tile will no longer be available in the AI Studio.')) return;
+      if (!window.confirm(t('Remove the texture? The tile will no longer be available in the AI Studio.'))) return;
       api('DELETE', '/api/admin/products/' + product.id + '/texture').then(function (p) { show(p); fields.vizEnabled.checked = false; }).catch(function (e) { fail(notes, e); });
     } });
 
@@ -749,7 +796,7 @@
     api('GET', '/api/admin/products/' + product.id).then(function (p) {
       show(p);
       p.images.forEach(function (image, i) {
-        photoButtons.appendChild(el('button', { class: 'small', type: 'button', text: 'Crop from photo ' + (i + 1), onclick: function () { openCrop('/api/admin/images/' + image.id + '/raw'); } }));
+        photoButtons.appendChild(el('button', { class: 'small', type: 'button', text: t('Crop from photo {n}', { n: i + 1 }), onclick: function () { openCrop('/api/admin/images/' + image.id + '/raw'); } }));
       });
     }).catch(function (e) { fail(notes, e); });
 
@@ -786,7 +833,7 @@
         if (!data.items.length) results.appendChild(el('p', { text: q.value.trim() || status.value ? 'No matching orders.' : 'No orders yet.' }));
         if (data.pages > 1) {
           pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page <= 1, text: 'Previous', onclick: function () { page--; load(); } }));
-          pager.appendChild(el('span', { text: 'Page ' + data.page + ' of ' + data.pages }));
+          pager.appendChild(el('span', { text: t('Page {p} of {q}', { p: data.page, q: data.pages }) }));
           pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page >= data.pages, text: 'Next', onclick: function () { page++; load(); } }));
         }
         if (data.items.length) {
@@ -823,19 +870,19 @@
     main.appendChild(notes);
     main.appendChild(el('button', { type: 'button', text: '← Back to orders', onclick: function () { go('orders'); } }));
     api('GET', '/api/admin/orders/' + id).then(function (o) {
-      main.appendChild(el('h1', { text: 'Order #' + o.id }));
+      main.appendChild(el('h1', { text: t('Order #{n}', { n: o.id }) }));
       main.appendChild(el('div', { class: 'card' },
         el('p', null, el('strong', { text: o.customer_name }), ' · ', o.phone),
-        o.address ? el('p', { text: 'Address: ' + o.address }) : null,
-        o.note ? el('p', { text: 'Note: ' + o.note }) : null,
-        el('p', { text: 'Created ' + when(o.created_at) + ' · Status: ' + o.status }),
+        o.address ? el('p', { text: t('Address:') + ' ' + o.address }) : null,
+        o.note ? el('p', { text: t('Note:') + ' ' + o.note }) : null,
+        el('p', { text: t('Created {d} · Status: {s}', { d: when(o.created_at), s: t(o.status) }) }),
         el('table', null,
           el('thead', null, el('tr', null, ['Item', 'Qty', 'Unit price', 'Line total'].map(function (h) { return el('th', null, h); }))),
           el('tbody', null, o.items.map(function (i) {
             return el('tr', null, el('td', null, i.product_name), el('td', { class: 'num' }, String(i.qty)),
               el('td', { class: 'num' }, money(i.unit_price)), el('td', { class: 'num' }, money(i.qty * i.unit_price)));
           }))),
-        el('p', { style: 'text-align:end;margin-top:12px', text: 'Total: ' + money(o.total) })
+        el('p', { style: 'text-align:end;margin-top:12px', text: t('Total:') + ' ' + money(o.total) })
       ));
       var actions = el('div', { class: 'actions' });
       [['confirmed', 'Confirm'], ['delivered', 'Mark delivered'], ['cancelled', 'Cancel order'], ['pending', 'Set pending']].forEach(function (pair) {
@@ -940,7 +987,7 @@
                     .then(function () { notice(notes, 'Saved.', 'ok'); refresh(); }).catch(function (error) { fail(notes, error); });
                 } }), ' ',
                 state.user.role === 'owner' ? el('button', { class: 'small danger', type: 'button', text: 'Delete', onclick: function () {
-                  if (!window.confirm('Delete this category? Its products stay, but lose the category.')) return;
+                  if (!window.confirm(t('Delete this category? Its products stay, but lose the category.'))) return;
                   api('DELETE', '/api/admin/categories/' + c.id).then(function () { refresh(); }).catch(function (error) { fail(notes, error); });
                 } }) : null));
           }))));
@@ -978,7 +1025,7 @@
                 .then(function (r) { paint(r.items); notice(notes, 'Saved.', 'ok'); }).catch(function (error) { fail(notes, error); });
             } }),
             el('button', { class: 'small danger', type: 'button', text: 'Delete', onclick: function () {
-              if (!window.confirm('Delete this photo? This cannot be undone.')) return;
+              if (!window.confirm(t('Delete this photo? This cannot be undone.'))) return;
               api('DELETE', '/api/admin/gallery/' + g.id).then(function (r) { paint(r.items); notice(notes, 'Photo deleted.', 'ok'); }).catch(function (error) { fail(notes, error); });
             } }))));
       });
@@ -1100,33 +1147,33 @@
     main.appendChild(el('button', { type: 'button', text: '← AI Studio', onclick: function () { go('studio'); } }));
     api('GET', '/api/admin/studio/projects/' + id).then(function (p) {
       var d = p.data || {};
-      main.appendChild(el('h1', { text: 'Project ' + p.ref }));
+      main.appendChild(el('h1', { text: t('Project {r}', { r: p.ref }) }));
       var info = el('div', { class: 'card' },
-        el('p', null, el('strong', { text: d.productCode != null ? 'Tile #' + d.productCode + ' ' + (d.productName || '') + (d.tileSize ? ' · ' + d.tileSize + ' cm' : '') : 'No tile chosen' })),
-        el('p', { text: 'Area: ' + (d.area != null ? d.area + ' m²' : '—') + ' · Total to order: ' + (d.tiles != null ? d.tiles + ' pcs' : '—') + (d.waste != null ? ' (incl. ' + d.waste + '% cutting allowance)' : '') }),
-        el('p', { class: 'muted', text: 'Saved ' + when(p.createdAt) + ' · language ' + p.lang + ' · deleted automatically ' + when(p.expiresAt) }),
-        p.description ? el('p', { text: 'Customer notes: ' + p.description }) : null,
+        el('p', null, el('strong', { text: d.productCode != null ? t('Tile #{n}', { n: d.productCode }) + ' ' + (d.productName || '') + (d.tileSize ? ' · ' + d.tileSize + ' ' + t('cm') : '') : 'No tile chosen' })),
+        el('p', { text: t('Area:') + ' ' + (d.area != null ? d.area + ' m²' : '—') + ' · ' + t('Total to order:') + ' ' + (d.tiles != null ? d.tiles + ' ' + t('pcs') : '—') + (d.waste != null ? ' ' + t('(incl. {n}% cutting allowance)', { n: d.waste }) : '') }),
+        el('p', { class: 'muted', text: t('Saved {d} · language {l} · deleted automatically {e}', { d: when(p.createdAt), l: p.lang, e: when(p.expiresAt) }) }),
+        p.description ? el('p', { text: t('Customer notes:') + ' ' + p.description }) : null,
         el('div', { class: 'actions' },
           el('button', { class: p.measurementStatus === 'verified' ? '' : 'primary', type: 'button', text: p.measurementStatus === 'verified' ? 'Mark measurements as not verified' : 'Mark measurements verified on site', onclick: function () {
             api('PATCH', '/api/admin/studio/projects/' + p.id, { measurementStatus: p.measurementStatus === 'verified' ? 'customer' : 'verified' })
               .then(function () { go('studio-project', p.id); }).catch(function (e) { fail(notes, e); });
           } }),
           state.user.role === 'owner' ? el('button', { class: 'danger', type: 'button', text: 'Delete project', onclick: function () {
-            if (!window.confirm('Delete this customer project and its photos?')) return;
+            if (!window.confirm(t('Delete this customer project and its photos?'))) return;
             api('DELETE', '/api/admin/studio/projects/' + p.id).then(function () { go('studio'); }).catch(function (e) { fail(notes, e); });
           } }) : null));
       main.appendChild(info);
       p.views.forEach(function (v) {
         var base = '/api/admin/studio/projects/' + p.id + '/views/' + v.idx + '/';
         main.appendChild(el('section', { class: 'card' },
-          el('h2', { text: 'Photo ' + (v.idx + 1) + (v.data.rect ? ' · marked rectangle ' + v.data.rect.length + ' × ' + v.data.rect.width + ' m' : '') }),
+          el('h2', { text: t('Photo {n}', { n: v.idx + 1 }) + (v.data.rect ? ' · ' + t('marked rectangle {l} × {w} m', { l: v.data.rect.length, w: v.data.rect.width }) : '') }),
           el('div', { class: 'studio-pair' },
             el('figure', null, el('img', { src: base + 'original', alt: 'Original', loading: 'lazy' }), el('figcaption', { text: 'Original' })),
             v.hasResult ? el('figure', null, el('img', { src: base + 'result', alt: 'Design', loading: 'lazy' }), el('figcaption', { text: 'Design' })) : null)));
       });
       if (p.reports && p.reports.length) {
         main.appendChild(el('section', { class: 'card' }, el('h2', { text: 'Reports' }),
-          p.reports.map(function (r) { return el('p', { text: when(r.created_at) + ' — ' + r.message + (r.resolved_at ? ' (resolved)' : '') }); })));
+          p.reports.map(function (r) { return el('p', { text: when(r.created_at) + ' — ' + r.message + (r.resolved_at ? ' (' + t('resolved') + ')' : '') }); })));
       }
     }).catch(function (e) { fail(notes, e); });
   }
@@ -1193,7 +1240,7 @@
     function imageCard(kind, title, help) {
       var key = kind === 'logo' ? 'logo_url' : 'hero_url';
       var preview = el('img', { class: 'site-image ' + kind, alt: '' });
-      var file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Choose ' + kind });
+      var file = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', 'aria-label': 'Choose an image' });
       var reset = el('button', { class: 'small', type: 'button', text: 'Use the original', onclick: function () {
         api('DELETE', '/api/admin/settings/images/' + kind).then(function (saved) { show(saved); notice(notes, 'Restored.', 'ok'); }).catch(function (error) { fail(notes, error); });
       } });
@@ -1258,7 +1305,7 @@
           el('tbody', null, data.items.map(function (u) {
             var isSelf = u.id === state.user.id;
             return el('tr', null,
-              el('td', null, u.email, isSelf ? pill('you') : null), el('td', null, u.displayName), el('td', null, u.role),
+              el('td', null, u.email, isSelf ? pill('you') : null), el('td', null, u.displayName), el('td', null, t(u.role)),
               el('td', null, pill(u.active ? 'active' : 'disabled', u.active ? 'on' : 'off')), el('td', null, when(u.lastLoginAt)),
               el('td', null,
                 el('button', { class: 'small', type: 'button', disabled: isSelf && u.active, text: u.active ? 'Disable' : 'Enable', onclick: function () {
@@ -1268,7 +1315,7 @@
                   api('PATCH', '/api/admin/users/' + u.id, { role: u.role === 'owner' ? 'staff' : 'owner' }).then(refresh).catch(function (error) { fail(notes, error); });
                 } }), ' ',
                 el('button', { class: 'small', type: 'button', text: 'Reset password', onclick: function () {
-                  var next = window.prompt('New password for ' + u.email + ' (12+ characters). All of their sessions will end.');
+                  var next = window.prompt(t('New password for {e} (12+ characters). All of their sessions will end.', { e: u.email }));
                   if (!next) return;
                   api('POST', '/api/admin/users/' + u.id + '/password', { password: next })
                     .then(function () { notice(notes, 'Password reset.', 'ok'); })
@@ -1299,7 +1346,7 @@
               el('td', null, row.detail ? JSON.stringify(row.detail) : ''));
           }))));
         clear(pager);
-        pager.appendChild(el('span', { text: data.total + ' entries · page ' + data.page + ' of ' + data.pages }));
+        pager.appendChild(el('span', { text: t('{n} entries · page {p} of {q}', { n: data.total, p: data.page, q: data.pages }) }));
         pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page <= 1, text: 'Newer', onclick: function () { page--; load(); } }));
         pager.appendChild(el('button', { class: 'small', type: 'button', disabled: data.page >= data.pages, text: 'Older', onclick: function () { page++; load(); } }));
       }).catch(function (error) { fail(results, error); });
@@ -1312,6 +1359,7 @@
   }
 
   // ---------- Boot ----------
+  applyLang();
   api('GET', '/api/auth/me')
     .then(function (data) {
       state.user = data.user;
