@@ -102,7 +102,7 @@ Netlify's own rate limiting rules can add a stronger limit on `/api/auth/login`.
 
 ## Changing the design
 
-The public page is `public/index.template.html`: the original markup and CSS, with placeholders
+The public page is `views/index.template.html`: the original markup and CSS, with placeholders
 (`{{PHONE_1}}`, `{{WA_NUMBER}}`, …) that the server fills from **Settings**. Product cards are generated
 from the database using the same markup as the original, so the existing gallery scripts keep working.
 Edit colours and layout in the template's `<style>` blocks. The gallery scripts are in `public/js/`.
@@ -126,7 +126,7 @@ Edit colours and layout in the template's `<style>` blocks. The gallery scripts 
 | `src/auth.js` | Passwords, sessions, roles, CSRF |
 | `src/uploads.js` | Image validation and WebP conversion |
 | `src/render.js` | Builds the public page from the template and database |
-| `public/index.template.html` | Public page (original design) |
+| `views/index.template.html` | Public page (original design) |
 | `public/admin/` | Admin interface |
 | `scripts/create-admin.js` | Creates the owner account |
 | `scripts/import-legacy.js` | Imports the original page's products (run once) |

@@ -59,7 +59,8 @@ export function publicRouter({ db, enquiryLimiter }) {
 
   router.get('/admin', (req, res) => {
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    res.sendFile(path.join(config.publicDir, 'admin', 'index.html'));
+    // Served by the app (not as a static file) so the page always gets the security headers.
+    res.sendFile(path.join(config.root, 'views', 'admin.html'));
   });
 
   return router;

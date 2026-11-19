@@ -349,3 +349,15 @@ describe('original products import', () => {
     assert.equal(dupes.n, 0);
   });
 });
+
+describe('page sources', () => {
+  test('the unrendered template and admin page are not inside the static folder', () => {
+    assert.equal(fs.existsSync(path.join(process.cwd(), 'public', 'index.template.html')), false);
+    assert.equal(fs.existsSync(path.join(process.cwd(), 'public', 'admin', 'index.html')), false);
+  });
+
+  test('the admin page is served with the security headers', async () => {
+    const res = await call('GET', '/admin');
+    assert.match(res.headers.get('content-security-policy') || '', /script-src 'self'/);
+  });
+});

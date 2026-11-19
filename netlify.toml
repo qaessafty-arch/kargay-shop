@@ -5,7 +5,7 @@
 
 [functions]
   node_bundler = "esbuild"
-  included_files = ["public/**", "src/**", "scripts/legacy/**"]
+  included_files = ["public/**", "views/**", "src/**", "scripts/legacy/**"]
   # Native and large packages stay in node_modules instead of being bundled.
   external_node_modules = ["sharp", "pg", "@electric-sql/pglite", "@netlify/blobs"]
 

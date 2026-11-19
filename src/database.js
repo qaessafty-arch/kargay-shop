@@ -112,9 +112,21 @@ function numbered(sql) {
 export class Database {
   constructor(driver) {
     this.driver = driver;
-    this.ready = this.migrate();
-    // Stop an unhandled rejection from crashing the process before the first query awaits it.
-    this.ready.catch(() => {});
+    this.readyPromise = null;
+  }
+
+  /**
+   * Resolves once the schema exists. If setup fails (for example while a serverless database is waking up),
+   * the failure is not cached: the next call tries again instead of failing forever on this server instance.
+   */
+  get ready() {
+    if (!this.readyPromise) {
+      this.readyPromise = this.migrate().catch((error) => {
+        this.readyPromise = null;
+        throw error;
+      });
+    }
+    return this.readyPromise;
   }
 
   async migrate() {
@@ -200,7 +212,15 @@ export function getDatabase() {
 
 function createDriver() {
   if (config.databaseUrl) {
-    const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 5, idleTimeoutMillis: 10_000 });
+    const pool = new pg.Pool({
+      connectionString: config.databaseUrl,
+      max: 5,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 10_000,
+      keepAlive: true,
+    });
+    // An idle connection dropped by the database must not crash the process.
+    pool.on('error', (error) => console.error('[db pool]', error.message));
     return pool;
   }
   if (config.isProduction) {

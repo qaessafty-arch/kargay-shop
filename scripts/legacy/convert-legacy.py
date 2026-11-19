@@ -3,7 +3,7 @@
 Usage: python3 scripts/legacy/convert-legacy.py <path-to-original-index.html> <project-root>
 
 Writes:
-  <root>/public/index.template.html   page shell with {{PLACEHOLDERS}} and <!--GALLERY-->
+  <root>/views/index.template.html    page shell with {{PLACEHOLDERS}} and <!--GALLERY-->
   <root>/public/js/*.js               inline scripts moved out so a strict CSP can run them
   <root>/scripts/legacy/manifest.json product rows and image file names for the DB import
   <root>/scripts/legacy/images/*      raw image bytes decoded from data URIs (imported by the Node script)
@@ -95,7 +95,8 @@ shell = re.sub(r"data:image/svg\+xml,[^\"')\s]+", "/img/blank.gif", shell)
 shell = shell.replace("0750 425 1661", "{{PHONE_1}}").replace("0750 704 1661", "{{PHONE_2}}")
 shell = shell.replace("9647504251661", "{{WA_NUMBER}}").replace("@kargay.barzan.shree", "{{TIKTOK}}")
 
-with open(os.path.join(root, "public", "index.template.html"), "w", encoding="utf-8") as f:
+os.makedirs(os.path.join(root, "views"), exist_ok=True)
+with open(os.path.join(root, "views", "index.template.html"), "w", encoding="utf-8") as f:
     f.write(shell)
 
 with open(os.path.join(legacy, "manifest.json"), "w", encoding="utf-8") as f:

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config.js';
 
-const TEMPLATE_PATH = path.join(config.publicDir, 'index.template.html');
+// Kept outside public/ so static hosting can never serve the unrendered template.
+const TEMPLATE_PATH = path.join(config.root, 'views', 'index.template.html');
 let templateCache = null;
 
 /** Reads the page template once; in development it is re-read on every request so edits show immediately. */
