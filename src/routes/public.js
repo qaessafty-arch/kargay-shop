@@ -69,6 +69,7 @@ export function publicRouter({ db, enquiryLimiter }) {
 /** Static assets: site scripts/styles, and local uploads when running without Vercel Blob. */
 export function staticRouter(uploadsRoot) {
   const router = Router();
+  router.use('/css', express.static(path.join(config.publicDir, 'css'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
   router.use('/js', express.static(path.join(config.publicDir, 'js'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
   router.use('/admin', express.static(path.join(config.publicDir, 'admin'), { maxAge: '1h', index: false, dotfiles: 'deny' }));
   router.use('/assets', express.static(path.join(config.publicDir, 'assets'), { maxAge: '1d', index: false, dotfiles: 'deny' }));
